@@ -1,0 +1,28 @@
+# Hebos overlay: remap ports so OW does not clash with hebos-infra local.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.hebos.yml up -d
+
+services:
+  db:
+    ports:
+      - "5434:5432"
+
+  redis:
+    ports:
+      - "6380:6379"
+
+  app:
+    ports:
+      - "8000:8000"
+
+  frontend:
+    ports:
+      - "3010:3000"
+
+  svix-server:
+    ports:
+      - "8071:8071"
+
+  flower:
+    profiles: ["debug"]
+    ports:
+      - "5555:5555"
