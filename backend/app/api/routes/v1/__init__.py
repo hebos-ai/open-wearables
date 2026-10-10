@@ -18,6 +18,7 @@ from .meta import router as meta_router
 from .oauth import router as oauth_router
 from .oura_webhooks import router as oura_webhooks_router
 from .outgoing_webhooks import router as outgoing_webhooks_router
+from .planned_workouts import router as planned_workouts_router
 from .priorities import router as priorities_router
 from .sdk_logs import router as sdk_logs_router
 from .sdk_sync import router as sdk_sync_router
@@ -47,6 +48,7 @@ v1_router.include_router(health_scores_router, tags=["External: Health Scores"])
 v1_router.include_router(oauth_router, prefix="/oauth")
 v1_router.include_router(sync_data_router, prefix="/providers", tags=["External: Data Sync"])
 v1_router.include_router(sync_status_router, tags=["External: Sync Status"])
+v1_router.include_router(planned_workouts_router, prefix="/providers", tags=["External: Planned Workouts"])
 v1_router.include_router(vendor_workouts_router, prefix="/providers", tags=["System: Vendor Workouts"])
 v1_router.include_router(import_xml_router, tags=["External: Apple Health Import"])
 v1_router.include_router(sdk_logs_router, tags=["External: Mobile SDK"])

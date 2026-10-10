@@ -1,0 +1,114 @@
+---
+title: "Wahoo API Integration"
+description: "Connect Wahoo (ELEMNT, KICKR, TICKR, Wahoo app) via the Wahoo Cloud API: OAuth 2.0, workout sync, workout_summary webhooks and planned-workout push."
+keywords: ["wahoo api integration", "wahoo cloud api", "wahoo oauth", "elemnt workouts", "wahoo planned workouts"]
+"og:title": "Wahoo API Integration | Open Wearables"
+"og:description": "Connect Wahoo via OAuth 2.0. Syncs completed workouts, receives workout_summary webhooks and pushes planned workouts."
+"og:url": "https://docs.openwearables.io/providers/wahoo-api-integration"
+"og:type": "article"
+"twitter:title": "Wahoo API Integration | Open Wearables"
+"twitter:description": "Connect Wahoo via OAuth 2.0. Syncs completed workouts, receives workout_summary webhooks and pushes planned workouts."
+"twitter:card": "summary_large_image"
+---
+
+## Overview
+
+The [Wahoo Cloud API](https://cloud-api.wahooligan.com/) exposes the workouts recorded with ELEMNT bike computers, KICKR trainers, TICKR straps and the Wahoo app. Open Wearables uses it to:
+
+- **read** completed workouts (REST backfill + `workout_summary` webhooks), and
+- **write** planned (structured) workouts to the athlete's Wahoo account — see [Planned workouts](/dev-guides/planned-workouts).
+
+### Supported data types
+
+| Data Type | Support |
+|-----------|---------|
+| Workouts | Yes (summary metrics) |
+| Per-second samples | No — only available inside the FIT file (`workout_summary.file.url`), not parsed yet |
+| Sleep / daily summaries | No — not exposed by Wahoo |
+| Planned workouts (write) | Yes — biking and running |
+
+### Data delivery
+
+| Method | Description |
+|--------|-------------|
+| **Polling (pull)** | `GET /v1/workouts`, newest first, 50 per page by default (`WAHOO_EVENTS_PER_PAGE`) |
+| **Webhooks (push)** | Wahoo POSTs the full `workout_summary` when a workout is uploaded; retries after 30 min, 4 h, 24 h and 72 h |
+
+Only **completed** workouts are stored. A Wahoo workout without `workout_summary` is a planned/upcoming entry and is skipped. Re-delivered or overlapping workouts are de-duplicated by Wahoo workout id.
+
+## Developer access and limits
+
+| App state | Limits |
+|-----------|--------|
+| Sandbox (new app) | 25 req / 5 min, 100 / hour, 250 / day |
+| Production (after Wahoo approval) | 200 req / 5 min, 1,000 / hour, 5,000 / day |
+
+Sandbox limits are enough for development with a few athletes; request production approval from the [developer portal](https://developers.wahooligan.com/) before onboarding real users. Questions: `wahooapi@wahoofitness.com`.
+
+## Setup
+
+<Steps>
+  <Step title="Create the application">
+    Create an app at [developers.wahooligan.com/applications/new](https://developers.wahooligan.com/applications/new) and set the redirect URI to:
+
+    ```
+    {API_BASE_URL}/api/v1/oauth/wahoo/callback
+    ```
+
+    Keep the app **confidential** (server-side client secret).
+  </Step>
+  <Step title="Select scopes">
+    Enable `user_read`, `workouts_read` and `offline_data` (required for webhooks). Add `plans_write` and `workouts_write` if you want to push planned workouts.
+  </Step>
+  <Step title="Configure the webhook">
+    In the app settings enable webhooks, set the URL to `{API_BASE_URL}/api/v1/providers/wahoo/webhooks` and choose a **Webhook Token**. Open Wearables rejects every webhook whose `webhook_token` does not match `WAHOO_WEBHOOK_TOKEN`.
+  </Step>
+  <Step title="Set the environment variables">
+    ```bash .env
+    WAHOO_CLIENT_ID=your-wahoo-client-id
+    WAHOO_CLIENT_SECRET=your-wahoo-client-secret
+    WAHOO_DEFAULT_SCOPE=user_read workouts_read offline_data plans_write workouts_write
+    WAHOO_WEBHOOK_TOKEN=the-token-you-set-in-the-portal
+    # WAHOO_EVENTS_PER_PAGE=50
+    ```
+  </Step>
+</Steps>
+
+## OAuth details
+
+| Item | Value |
+|------|-------|
+| Authorize | `https://api.wahooligan.com/oauth/authorize` |
+| Token | `https://api.wahooligan.com/oauth/token` (credentials in the form body) |
+| Access token lifetime | 2 hours |
+| Refresh tokens | Single use, rotated on every refresh |
+| User id | `GET /v1/user` → `id` (matches `user.id` in webhooks) |
+| Disconnect | `DELETE /v1/permissions` |
+
+Wahoo limits each user to 10 non-revoked tokens per app; disconnecting a user revokes the app's permissions.
+
+## Field mapping
+
+| Wahoo `workout_summary` | Open Wearables |
+|-------------------------|----------------|
+| `duration_total_accum` (s) | `duration_seconds` (fallback: `minutes × 60`) |
+| `duration_active_accum` (s) | `moving_time_seconds` |
+| `distance_accum` (m) | `distance` |
+| `calories_accum` (kcal) | `energy_burned` |
+| `heart_rate_avg` | `heart_rate_avg` |
+| `power_avg` (W) | `average_watts` |
+| `speed_avg` (m/s) | `average_speed` |
+| `cadence_avg` | `average_cadence` |
+| `ascent_accum` (m) | `total_elevation_gain` |
+| `time_zone` (IANA) | `zone_offset` at the workout start |
+| `workout_type_id` | `type` (see `app/constants/workout_types/wahoo.py`; unknown ids → `other`) |
+
+`power_bike_np_last` (normalized power) and `power_bike_tss_last` (TSS) are not mapped: the unified workout detail has no field for them yet.
+
+## Planned workouts
+
+`POST /api/v1/providers/wahoo/users/{user_id}/planned-workouts` translates the canonical workout to Wahoo's [plan.json v1.0.0](https://cloud-api.wahooligan.com/docs/plan-json-format.pdf), creates the plan (`POST /v1/plans`) and, when `scheduled_at` is given, schedules it (`POST /v1/workouts`) so it appears on the athlete's ELEMNT / Wahoo app. See [Planned workouts](/dev-guides/planned-workouts) for the request format and the mapping table.
+
+<Warning>
+Validate the push against your sandbox app before going live: the plan file is sent as a base64 `data:application/json` URI in a form field, as described in the Wahoo API reference.
+</Warning>

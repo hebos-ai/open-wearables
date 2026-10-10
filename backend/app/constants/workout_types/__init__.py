@@ -9,6 +9,7 @@ from .google import get_unified_workout_type as get_unified_google_workout_type
 from .polar import get_unified_workout_type as get_unified_polar_workout_type
 from .strava import get_unified_workout_type as get_unified_strava_workout_type
 from .suunto import get_unified_workout_type as get_unified_suunto_workout_type
+from .wahoo import get_unified_workout_type as get_unified_wahoo_workout_type
 from .whoop import get_unified_workout_type as get_unified_whoop_workout_type
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "get_unified_suunto_workout_type",
     "get_unified_strava_workout_type",
     "get_unified_whoop_workout_type",
+    "get_unified_wahoo_workout_type",
     "get_unified_fitbit_workout_type",
 ]

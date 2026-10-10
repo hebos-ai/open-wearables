@@ -12,6 +12,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   ultrahuman: 'Ultrahuman',
   strava: 'Strava',
   fitbit: 'Fitbit',
+  wahoo: 'Wahoo',
+  coros: 'COROS',
 };
 
 interface Stat {

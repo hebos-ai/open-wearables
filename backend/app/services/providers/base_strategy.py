@@ -15,6 +15,7 @@ from app.schemas.enums import SeriesType
 from app.schemas.enums.health_score_category import HealthScoreCategory
 from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
+from app.services.providers.templates.base_planned_workouts import BasePlannedWorkoutsTemplate
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.providers.templates.base_webhook_service import BaseWebhookService
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
@@ -132,6 +133,8 @@ class BaseProviderStrategy(ABC):
         self.data_247: Base247DataTemplate | None = None
         self.webhooks: BaseWebhookHandler | None = None
         self.webhook_service: BaseWebhookService | None = None
+        # Optional write capability: push planned (structured) workouts to the provider.
+        self.planned_workouts: BasePlannedWorkoutsTemplate | None = None
 
     @property
     @abstractmethod
@@ -226,6 +229,11 @@ class BaseProviderStrategy(ABC):
     def has_cloud_api(self) -> bool:
         """Returns True if provider uses cloud OAuth API."""
         return self.oauth is not None
+
+    @property
+    def supports_planned_workouts(self) -> bool:
+        """True when the provider can receive planned workouts via ``planned_workouts.push()``."""
+        return self.planned_workouts is not None
 
     @property
     def live_sync_configurable(self) -> bool:

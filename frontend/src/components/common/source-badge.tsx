@@ -23,6 +23,8 @@ const PROVIDER_STYLES: Record<
   withings: { bg: 'bg-cyan-500/20', text: 'text-cyan-400', label: 'Withings' },
   polar: { bg: 'bg-red-500/20', text: 'text-red-400', label: 'Polar' },
   suunto: { bg: 'bg-orange-600/20', text: 'text-orange-300', label: 'Suunto' },
+  wahoo: { bg: 'bg-blue-600/20', text: 'text-blue-300', label: 'Wahoo' },
+  coros: { bg: 'bg-zinc-500/20', text: 'text-zinc-300', label: 'COROS' },
   samsung: { bg: 'bg-sky-500/20', text: 'text-sky-400', label: 'Samsung' },
   ultrahuman: {
     bg: 'bg-purple-500/20',

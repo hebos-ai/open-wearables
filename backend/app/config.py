@@ -187,6 +187,28 @@ class Settings(BaseSettings):
     # Strava API max is 200 activities per page
     strava_events_per_page: int = 200
 
+    # WAHOO OAUTH SETTINGS
+    wahoo_client_id: str | None = None
+    wahoo_client_secret: SecretStr | None = None
+    # Space-separated. plans_write + workouts_write are only needed for planned-workout push;
+    # offline_data is required for Wahoo to deliver webhooks.
+    wahoo_default_scope: str = "user_read workouts_read offline_data plans_write workouts_write"
+    # Value of "Webhook Token" configured in the Wahoo developer portal; echoed in every webhook body.
+    # No fallback: when unset, all Wahoo webhooks are rejected.
+    wahoo_webhook_token: SecretStr | None = None
+    # Wahoo API default page size is 30; larger pages reduce request count against strict sandbox limits.
+    wahoo_events_per_page: int = Field(50, ge=1, le=100)
+
+    # COROS OAUTH SETTINGS
+    # COROS only publishes its API to approved partners (api@coros.com). Endpoints are
+    # therefore configuration, not code: leave them unset until partner access is granted.
+    coros_client_id: str | None = None
+    coros_client_secret: SecretStr | None = None
+    coros_authorize_url: str | None = None
+    coros_token_url: str | None = None
+    coros_api_base_url: str | None = None
+    coros_default_scope: str = ""
+
     # ULTRAHUMAN OAUTH SETTINGS
     ultrahuman_client_id: str | None = None
     ultrahuman_client_secret: SecretStr | None = None

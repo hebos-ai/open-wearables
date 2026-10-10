@@ -800,6 +800,12 @@ If `webhook_registration_api=False` (the default), switching sync mode to `webho
 
 ---
 
+## Step 10 (Optional): Planned Workouts (write)
+
+If the provider accepts structured workouts (e.g. Wahoo plans), implement `BasePlannedWorkoutsTemplate` in `planned_workouts.py` and set `self.planned_workouts` in your strategy. The shared endpoint `POST /api/v1/providers/{provider}/users/{user_id}/planned-workouts` picks it up automatically. See [Planned Workouts](/dev-guides/planned-workouts).
+
+---
+
 ## Troubleshooting
 
 <AccordionGroup>

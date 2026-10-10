@@ -106,6 +106,7 @@ def make_authenticated_request(
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     json_data: dict[str, Any] | None = None,
+    form_data: dict[str, Any] | None = None,
     expect_json: bool = True,
     http2: bool = False,
 ) -> Any:
@@ -125,6 +126,7 @@ def make_authenticated_request(
         params: Query parameters
         headers: Additional headers (Authorization header will be added automatically)
         json_data: JSON body for POST/PUT requests
+        form_data: Form-encoded body for POST/PUT requests (mutually exclusive with json_data)
         expect_json: Whether to parse response as JSON (default True).
             Set to False for endpoints that return empty bodies (e.g., 202 Accepted).
         http2: Enable HTTP/2 for this request (default False). Requires the h2
@@ -137,6 +139,9 @@ def make_authenticated_request(
     Raises:
         HTTPException: If API request fails
     """
+    if json_data is not None and form_data is not None:
+        raise ValueError("json_data and form_data are mutually exclusive")
+
     # Get valid token (will auto-refresh if needed)
     access_token = _get_valid_token(db, user_id, provider_name, connection_repo, oauth)
 
@@ -160,6 +165,7 @@ def make_authenticated_request(
                     headers=request_headers,
                     params=params or {},
                     json=json_data,
+                    data=form_data,
                     timeout=30.0,
                 )
 
