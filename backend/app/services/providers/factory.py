@@ -1,6 +1,7 @@
 from app.schemas.enums import ProviderName
 from app.services.providers.apple.strategy import AppleStrategy
 from app.services.providers.base_strategy import BaseProviderStrategy
+from app.services.providers.coros.strategy import CorosStrategy
 from app.services.providers.fitbit.strategy import FitbitStrategy
 from app.services.providers.garmin.strategy import GarminStrategy
 from app.services.providers.google.strategy import GoogleStrategy
@@ -11,6 +12,7 @@ from app.services.providers.sensorbio.strategy import SensorBioStrategy
 from app.services.providers.strava.strategy import StravaStrategy
 from app.services.providers.suunto.strategy import SuuntoStrategy
 from app.services.providers.ultrahuman.strategy import UltrahumanStrategy
+from app.services.providers.wahoo.strategy import WahooStrategy
 from app.services.providers.whoop.strategy import WhoopStrategy
 
 
@@ -44,5 +46,9 @@ class ProviderFactory:
                 return FitbitStrategy()
             case ProviderName.ULTRAHUMAN.value:
                 return UltrahumanStrategy()
+            case ProviderName.WAHOO.value:
+                return WahooStrategy()
+            case ProviderName.COROS.value:
+                return CorosStrategy()
             case _:
                 raise ValueError(f"Unknown provider: {provider_name}")

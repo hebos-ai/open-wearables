@@ -1,0 +1,58 @@
+---
+title: "COROS API Integration"
+description: "Status of the COROS integration: provider scaffold behind configuration, pending COROS partner API access."
+keywords: ["coros api integration", "coros partner api", "coros oauth", "coros training hub"]
+"og:title": "COROS API Integration | Open Wearables"
+"og:description": "COROS provider scaffold, pending COROS partner API access."
+"og:url": "https://docs.openwearables.io/providers/coros-api-integration"
+"og:type": "article"
+"twitter:title": "COROS API Integration | Open Wearables"
+"twitter:description": "COROS provider scaffold, pending COROS partner API access."
+"twitter:card": "summary_large_image"
+---
+
+## Status
+
+<Warning>
+COROS does **not** publish its API. Endpoints, payloads and webhook formats are shared only with approved partners. Open Wearables therefore ships a **scaffold**: the provider is registered and its OAuth endpoints are configurable, but no workout data is read and no planned workout is sent until the partner documentation is available.
+</Warning>
+
+| Capability | State |
+|------------|-------|
+| Provider registered (`coros`) | Yes |
+| OAuth 2.0 | Endpoints from configuration; returns **503** until configured |
+| Workout sync | Not implemented (vendor routes answer **501**, the scheduler skips COROS) |
+| Webhooks | Not implemented |
+| Planned workouts (write) | Scaffold `CorosPlannedWorkouts` (not wired; the endpoint answers **501**) |
+
+## What COROS states publicly
+
+From the COROS support centre (not yet verified against partner documentation):
+
+- Partner API access is requested by application and email to `api@coros.com` (company details, technical contact, OAuth redirect URIs).
+- Partners get OAuth 2.0 client credentials, push notifications of completed workouts (about 5 minutes after the workout), FIT file download, daily health data, route import/export and **structured workout / training plan push**.
+- Stated rate limit: 1,000 calls per minute.
+
+Sources: [Partner API Access](https://support.coros.com/hc/en-us/articles/53181766856724-Partner-API-Access), [Submit an API Application](https://support.coros.com/hc/en-us/articles/17085887816340-Submit-an-API-Application).
+
+## Configuration (after approval)
+
+```bash .env
+COROS_CLIENT_ID=from-coros
+COROS_CLIENT_SECRET=from-coros
+COROS_AUTHORIZE_URL=https://...   # from the partner documentation
+COROS_TOKEN_URL=https://...
+COROS_API_BASE_URL=https://...
+COROS_DEFAULT_SCOPE=
+```
+
+Redirect URI to register with COROS: `{API_BASE_URL}/api/v1/oauth/coros/callback`.
+
+Assumptions in the scaffold, to confirm with the partner docs: authorization-code grant with credentials in the form body, no PKCE, and a user id returned in the token response (`openId` / `user_id`).
+
+## Completing the integration
+
+Once the documentation is available, follow [Adding a Provider](/dev-guides/how-to-add-new-provider):
+
+1. Add `workouts.py` (+ `app/constants/workout_types/coros.py`) and, if COROS pushes full payloads, `webhook_handler.py`; declare the matching `capabilities` and `coverage.py`.
+2. Implement `CorosPlannedWorkouts.translate()` / `send()` and wire it in `CorosStrategy` — the endpoint, request model and error handling are shared with Wahoo.

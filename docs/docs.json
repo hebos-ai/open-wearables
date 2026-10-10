@@ -115,6 +115,7 @@
             "pages": [
               "dev-guides/integration-guide",
               "dev-guides/how-to-add-new-provider",
+              "dev-guides/planned-workouts",
               "dev-guides/ngrok-setup",
               "dev-guides/seed-data-generator"
             ]
@@ -214,6 +215,12 @@
               "POST /api/v1/providers/garmin/users/{user_id}/backfill/cancel",
               "POST /api/v1/providers/garmin/users/{user_id}/backfill/{type_name}/retry",
               "POST /api/v1/providers/{provider}/users/{user_id}/sync/historical"
+            ]
+          },
+          {
+            "group": "Planned Workouts",
+            "pages": [
+              "POST /api/v1/providers/{provider}/users/{user_id}/planned-workouts"
             ]
           },
           {

@@ -1,0 +1,115 @@
+---
+title: "Planned Workouts (Write)"
+sidebarTitle: "Planned Workouts"
+description: "Push structured workouts to wearable providers with one provider-agnostic format. Canonical model, endpoint, per-provider mapping and how to add a provider."
+keywords: ["planned workouts api", "structured workouts", "push workout to wahoo", "training api", "workout export"]
+"og:title": "Planned Workouts (Write) | Open Wearables"
+"og:description": "Push structured workouts to wearable providers with one provider-agnostic format."
+"og:url": "https://docs.openwearables.io/dev-guides/planned-workouts"
+"og:type": "article"
+"twitter:title": "Planned Workouts (Write) | Open Wearables"
+"twitter:description": "Push structured workouts to wearable providers with one provider-agnostic format."
+"twitter:card": "summary_large_image"
+---
+
+## Overview
+
+Open Wearables is read-first. **Planned workouts** is an optional write capability: you describe a structured workout once, in a provider-agnostic format, and Open Wearables translates it for the provider the athlete is connected to.
+
+| Provider | Support |
+|----------|---------|
+| Wahoo | ✅ Biking and running (plan library + scheduling) |
+| COROS | 🔜 Scaffold, pending COROS partner API access |
+| Others | ❌ Endpoint answers `501` |
+
+## Canonical workout
+
+The same JSON is accepted for every provider, in `camelCase` or `snake_case`. It matches the canonical workout used by Garmin Training API connectors, so one client can feed every translator.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `name` | string (1–100) | |
+| `sport` | string | `bike`, `mtb`, `indoor_cycling`, `run`, `trail_running`, `treadmill`, … Each provider rejects sports it cannot express |
+| `steps[]` | 1–200 steps | |
+| `steps[].kind` | `warmup` · `interval` · `recovery` · `cooldown` · `rest` | |
+| `steps[].durationSec` | integer > 0 | Ends the step after this time… |
+| `steps[].distanceM` | number > 0 | …or after this distance (never both). With neither, the step is open (lap button) |
+| `steps[].target.type` | `power` · `hr` · `pace` | Optional |
+| `steps[].target.low` / `high` | number > 0 | At least one; a single bound means "hold this value" |
+
+**Units are absolute** so translators never need athlete thresholds: power in **watts**, heart rate in **bpm**, pace as **speed in m/s** (same convention as Garmin Training API).
+
+## Endpoint
+
+`POST /api/v1/providers/{provider}/users/{user_id}/planned-workouts` (API key required)
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/providers/wahoo/users/2b1f7c9e-3f0e-4c55-9a52-0c3f8f0d6a11/planned-workouts" \
+  -H "X-Open-Wearables-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workout": {
+      "name": "Sweet spot 2x10",
+      "sport": "bike",
+      "steps": [
+        {"kind": "warmup",   "durationSec": 600, "target": {"type": "power", "low": 120, "high": 160}},
+        {"kind": "interval", "durationSec": 600, "target": {"type": "power", "low": 230, "high": 245}},
+        {"kind": "recovery", "durationSec": 300, "target": {"type": "power", "high": 140}},
+        {"kind": "interval", "durationSec": 600, "target": {"type": "power", "low": 230, "high": 245}},
+        {"kind": "cooldown", "durationSec": 420}
+      ]
+    },
+    "scheduledAt": "2026-10-12T07:00:00+02:00",
+    "externalId": "plan-2026-10-12-sweetspot",
+    "description": "Tempo build, week 3"
+  }'
+```
+
+| Field | Notes |
+|-------|-------|
+| `workout` | Canonical workout (above) |
+| `scheduledAt` | Optional, timezone-aware. Without it the workout only goes to the athlete's library |
+| `externalId` | Optional stable id from your system; sent to the provider as its external id / token. Generated when omitted |
+| `description` | Optional |
+
+**201** response:
+
+```json
+{
+  "provider": "wahoo",
+  "status": "scheduled",
+  "external_id": "plan-2026-10-12-sweetspot",
+  "provider_plan_id": "777",
+  "provider_workout_id": "4242",
+  "scheduled_at": "2026-10-12T05:00:00Z"
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `201` | Created (`status: created`) or scheduled (`status: scheduled`) |
+| `401` | User not connected to the provider, or must re-authorize (e.g. connected before write scopes were requested) |
+| `422` | Invalid canonical workout, or not expressible by the provider (e.g. `swim` on Wahoo, open step on Wahoo) |
+| `501` | Provider does not support planned workouts |
+| `429` / `5xx` | Provider rate limit or error (passed through) |
+
+The push is synchronous and nothing is stored in Open Wearables: keep `provider_plan_id` / `provider_workout_id` if you need to reconcile later. Re-sending creates a new provider object.
+
+## Wahoo mapping
+
+| Canonical | Wahoo plan.json |
+|-----------|-----------------|
+| `sport` | `header.workout_type_family` (0 biking, 1 running), `header.workout_type_location` (indoor for `indoor_cycling` / `treadmill`, otherwise outdoor) |
+| `kind` | `intensity_type`: `wu` / `active` / `recover` / `cd` / `rest` |
+| `durationSec` / `distanceM` | `exit_trigger_type` `time` / `distance` |
+| `power` / `hr` / `pace` | target `watts` / `hr` / `speed` |
+
+Scheduling uses `workout_type_id` 0 (biking), 13 (MTB), 61 (indoor trainer), 1 (running), 4 (trail), 5 (treadmill); `minutes` is estimated from step durations (distance steps count only when they have a pace target).
+
+## Adding a provider
+
+1. Subclass `BasePlannedWorkoutsTemplate` (`app/services/providers/templates/base_planned_workouts.py`) in `app/services/providers/<provider>/planned_workouts.py`.
+2. Implement `translate()` — **pure**, canonical → provider payload; raise `PlannedWorkoutTranslationError` for anything the provider cannot express (never approximate silently).
+3. Implement `send()` with `self._make_api_request(..., json_data=... | form_data=...)` and return a `PlannedWorkoutPushResult`.
+4. Set `self.planned_workouts = YourPlannedWorkouts(...)` in the strategy; `supports_planned_workouts` becomes `True` and the endpoint starts accepting the provider.
+5. Unit-test `translate()` with plain objects and `send()` with a patched `_make_api_request`.
