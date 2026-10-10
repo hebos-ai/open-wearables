@@ -7,10 +7,14 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.schemas.planned_workouts import PlannedWorkout, PlannedWorkoutPushRequest
-from app.services.providers.templates.base_planned_workouts import PlannedWorkoutTranslationError
+from app.services.providers.templates.base_planned_workouts import (
+    PlannedWorkoutDeliveryError,
+    PlannedWorkoutTranslationError,
+)
 from app.services.providers.wahoo.planned_workouts import WahooPlannedWorkouts
 from app.services.providers.wahoo.strategy import WahooStrategy
 
@@ -186,9 +190,29 @@ class TestSend:
             result = planner.push(None, uuid4(), _request(SWEET_SPOT))  # type: ignore[arg-type]
         assert result.external_id
 
-    def test_missing_plan_id_is_an_error(self, planner: WahooPlannedWorkouts) -> None:
+    def test_missing_plan_id_is_a_delivery_error(self, planner: WahooPlannedWorkouts) -> None:
         with (
             patch.object(planner, "_make_api_request", return_value={}),
-            pytest.raises(ValueError, match="plan id"),
+            pytest.raises(PlannedWorkoutDeliveryError, match="plan id") as exc,
         ):
             planner.push(None, uuid4(), _request(SWEET_SPOT))  # type: ignore[arg-type]
+        assert exc.value.provider_plan_id is None
+
+    def test_plan_created_but_scheduling_fails_keeps_plan_id(self, planner: WahooPlannedWorkouts) -> None:
+        request = _request(SWEET_SPOT, scheduled_at="2026-10-12T07:00:00+00:00")
+        failure = HTTPException(status_code=422, detail="Wahoo API error: starts invalid")
+        with (
+            patch.object(planner, "_make_api_request", side_effect=[{"id": 777}, failure]),
+            pytest.raises(PlannedWorkoutDeliveryError) as exc,
+        ):
+            planner.push(None, uuid4(), request)  # type: ignore[arg-type]
+        assert exc.value.provider_plan_id == "777"
+
+    def test_reauthorization_is_not_masked(self, planner: WahooPlannedWorkouts) -> None:
+        request = _request(SWEET_SPOT, scheduled_at="2026-10-12T07:00:00+00:00")
+        with (
+            patch.object(planner, "_make_api_request", side_effect=[{"id": 777}, HTTPException(status_code=401)]),
+            pytest.raises(HTTPException) as exc,
+        ):
+            planner.push(None, uuid4(), request)  # type: ignore[arg-type]
+        assert exc.value.status_code == 401

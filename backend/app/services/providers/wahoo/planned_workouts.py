@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException
+
 from app.database import DbSession
 from app.schemas.planned_workouts import (
     PlannedWorkout,
@@ -39,6 +41,7 @@ from app.schemas.planned_workouts import (
 )
 from app.services.providers.templates.base_planned_workouts import (
     BasePlannedWorkoutsTemplate,
+    PlannedWorkoutDeliveryError,
     PlannedWorkoutTranslationError,
 )
 
@@ -190,7 +193,7 @@ class WahooPlannedWorkouts(BasePlannedWorkoutsTemplate):
         )
         plan_id = plan_response.get("id") if isinstance(plan_response, dict) else None
         if plan_id is None:
-            raise ValueError("Wahoo did not return a plan id")
+            raise PlannedWorkoutDeliveryError("wahoo", "POST /v1/plans returned no plan id")
 
         if request.scheduled_at is None:
             return PlannedWorkoutPushResult(
@@ -200,19 +203,27 @@ class WahooPlannedWorkouts(BasePlannedWorkoutsTemplate):
                 provider_plan_id=str(plan_id),
             )
 
-        workout_response = self._make_api_request(
-            db,
-            user_id,
-            "/v1/workouts",
-            form_data={
-                "workout[plan_id]": plan_id,
-                "workout[starts]": request.scheduled_at.isoformat(),
-                "workout[workout_type_id]": payload["workout_type_id"],
-                "workout[name]": request.workout.name,
-                "workout[minutes]": payload["minutes"],
-                "workout[workout_token]": external_id,
-            },
-        )
+        try:
+            workout_response = self._make_api_request(
+                db,
+                user_id,
+                "/v1/workouts",
+                form_data={
+                    "workout[plan_id]": plan_id,
+                    "workout[starts]": request.scheduled_at.isoformat(),
+                    "workout[workout_type_id]": payload["workout_type_id"],
+                    "workout[name]": request.workout.name,
+                    "workout[minutes]": payload["minutes"],
+                    "workout[workout_token]": external_id,
+                },
+            )
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                raise
+            # The plan exists in the athlete's library: surface its id so a retry can reuse it.
+            raise PlannedWorkoutDeliveryError(
+                "wahoo", f"plan created but scheduling failed: {exc.detail}", provider_plan_id=str(plan_id)
+            ) from exc
         workout_id = workout_response.get("id") if isinstance(workout_response, dict) else None
         return PlannedWorkoutPushResult(
             provider="wahoo",

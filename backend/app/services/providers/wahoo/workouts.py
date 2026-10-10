@@ -57,10 +57,9 @@ class WahooWorkouts(BaseWorkoutsTemplate):
         start_date: datetime,
         end_date: datetime,
     ) -> list[WahooWorkoutJSON]:
-        """Page through ``/v1/workouts`` (newest first) until past ``start_date``.
+        """Page through ``/v1/workouts`` (newest first) until a whole page predates ``start_date``.
 
-        Wahoo has no date filter, so pages are read in ``starts`` descending order and
-        filtering happens here.
+        Wahoo has no date filter, so filtering happens here.
         """
         start_utc, end_utc = _as_utc(start_date), _as_utc(end_date)
         collected: list[WahooWorkoutJSON] = []
@@ -76,16 +75,17 @@ class WahooWorkouts(BaseWorkoutsTemplate):
             if not listing.workouts:
                 break
 
-            reached_older = False
+            page_all_older = True
             for workout in listing.workouts:
                 starts = _as_utc(workout.starts)
-                if starts < start_utc:
-                    reached_older = True
-                    continue
-                if starts <= end_utc:
-                    collected.append(workout)
+                if starts >= start_utc:
+                    page_all_older = False
+                    if starts <= end_utc:
+                        collected.append(workout)
 
-            if reached_older or len(listing.workouts) < self.events_per_page:
+            # Stop only when a whole page predates the window: tolerates lists that are not
+            # strictly ordered by ``starts`` (late uploads, edits).
+            if page_all_older or len(listing.workouts) < self.events_per_page:
                 break
         else:
             log_structured(
@@ -188,6 +188,12 @@ class WahooWorkouts(BaseWorkoutsTemplate):
         if workout.workout_summary is None:
             return None
         record, detail = self._normalize_workout(workout, user_id)
+        existing = event_record_service.crud.get_by_external_id(db, user_id, record.external_id or "", provider="wahoo")
+        if existing is not None:
+            if existing.start_datetime == record.start_datetime and existing.end_datetime == record.end_datetime:
+                return existing.id
+            # Edited on Wahoo (new duration): replace instead of keeping two versions.
+            event_record_service.crud.delete_by_external_id(db, user_id, record.external_id or "", provider="wahoo")
         created = event_record_service.create(db, record)
         if created.id != record.id:
             # Already stored (overlapping pull window or a Wahoo webhook retry): keep it idempotent.

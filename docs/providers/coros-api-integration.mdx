@@ -20,7 +20,7 @@ COROS does **not** publish its API. Endpoints, payloads and webhook formats are 
 | Capability | State |
 |------------|-------|
 | Provider registered (`coros`) | Yes |
-| OAuth 2.0 | Endpoints from configuration; returns **503** until configured |
+| OAuth 2.0 | Endpoints from configuration; returns **503** until configured. Not offered as connectable (`has_cloud_api=false`) until `COROS_AUTHORIZE_URL`, `COROS_TOKEN_URL` and `COROS_CLIENT_ID` are set |
 | Workout sync | Not implemented (vendor routes answer **501**, the scheduler skips COROS) |
 | Webhooks | Not implemented |
 | Planned workouts (write) | Scaffold `CorosPlannedWorkouts` (not wired; the endpoint answers **501**) |

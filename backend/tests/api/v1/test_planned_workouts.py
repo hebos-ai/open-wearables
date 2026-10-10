@@ -6,7 +6,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.schemas.planned_workouts import PlannedWorkoutPushResult
-from app.services.providers.templates.base_planned_workouts import PlannedWorkoutTranslationError
+from app.services.providers.templates.base_planned_workouts import (
+    PlannedWorkoutDeliveryError,
+    PlannedWorkoutTranslationError,
+)
 from tests.factories import ApiKeyFactory, UserConnectionFactory, UserFactory
 
 BODY = {
@@ -79,3 +82,13 @@ def test_user_not_connected_is_401(client: TestClient, db: Session) -> None:
         _url("wahoo", UserFactory().id), json=BODY, headers={"X-Open-Wearables-API-Key": ApiKeyFactory().id}
     )
     assert response.status_code == 401
+
+
+def test_delivery_error_is_502_with_plan_id(client: TestClient, db: Session) -> None:
+    error = PlannedWorkoutDeliveryError("wahoo", "plan created but scheduling failed", provider_plan_id="777")
+    with patch(PUSH, side_effect=error):
+        response = client.post(
+            _url("wahoo", UserFactory().id), json=BODY, headers={"X-Open-Wearables-API-Key": ApiKeyFactory().id}
+        )
+    assert response.status_code == 502
+    assert response.json()["detail"]["provider_plan_id"] == "777"

@@ -8,7 +8,10 @@ from app.schemas.enums import ProviderName
 from app.schemas.planned_workouts import PlannedWorkoutPushRequest, PlannedWorkoutPushResult
 from app.services import ApiKeyDep
 from app.services.providers.factory import ProviderFactory
-from app.services.providers.templates.base_planned_workouts import PlannedWorkoutTranslationError
+from app.services.providers.templates.base_planned_workouts import (
+    PlannedWorkoutDeliveryError,
+    PlannedWorkoutTranslationError,
+)
 from app.utils.exceptions import UnsupportedProviderError
 
 router = APIRouter()
@@ -35,9 +38,14 @@ def push_planned_workout(
     - **501**: the provider does not support planned workouts
     - **422**: the workout cannot be expressed in the provider's format (e.g. unsupported sport)
     - **401**: the user is not connected to the provider or must re-authorize
+    - **502**: the provider did not complete the push; `provider_plan_id` is included when the
+      plan was created but could not be scheduled (reuse it instead of re-sending)
+
+    The API key is a backend credential: this endpoint writes to the athlete's provider account,
+    so never expose the key to end-user clients.
     """
     strategy = factory.get_provider(provider.value)
-    if strategy.planned_workouts is None:
+    if not strategy.supports_planned_workouts or strategy.planned_workouts is None:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=f"Provider '{provider.value}' does not support planned workouts",
@@ -47,5 +55,8 @@ def push_planned_workout(
         return strategy.planned_workouts.push(db, user_id, payload)
     except PlannedWorkoutTranslationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail) from exc
+    except PlannedWorkoutDeliveryError as exc:
+        detail: dict[str, str | None] = {"message": exc.detail, "provider_plan_id": exc.provider_plan_id}
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
     except UnsupportedProviderError as exc:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=exc.detail) from exc

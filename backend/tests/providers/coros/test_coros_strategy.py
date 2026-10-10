@@ -24,7 +24,7 @@ def coros() -> CorosStrategy:
 def test_identity_and_no_data_handlers(coros: CorosStrategy) -> None:
     assert coros.name == "coros"
     assert coros.display_name == "COROS"
-    assert coros.has_cloud_api
+    assert coros.oauth is not None
     assert coros.workouts is None
     assert coros.data_247 is None
     assert coros.webhooks is None
@@ -66,3 +66,14 @@ def test_planned_workout_scaffold_refuses_to_guess(coros: CorosStrategy) -> None
     )
     with pytest.raises(UnsupportedProviderError, match="partner"):
         scaffold.push(None, uuid4(), request)  # type: ignore[arg-type]
+
+
+def test_not_offered_as_connectable_until_configured(coros: CorosStrategy) -> None:
+    with patch.object(settings, "coros_authorize_url", None):
+        assert coros.has_cloud_api is False
+    with (
+        patch.object(settings, "coros_authorize_url", "https://partner.example/a"),
+        patch.object(settings, "coros_token_url", "https://partner.example/t"),
+        patch.object(settings, "coros_client_id", "cid"),
+    ):
+        assert coros.has_cloud_api is True

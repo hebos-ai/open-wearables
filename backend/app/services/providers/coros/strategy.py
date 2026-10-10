@@ -33,6 +33,11 @@ class CorosStrategy(BaseProviderStrategy):
         return "COROS"
 
     @property
+    def has_cloud_api(self) -> bool:
+        """Only offered as connectable once the partner OAuth endpoints are configured."""
+        return bool(settings.coros_authorize_url and settings.coros_token_url and settings.coros_client_id)
+
+    @property
     def api_base_url(self) -> str:
         return (settings.coros_api_base_url or "").rstrip("/")
 

@@ -52,6 +52,7 @@ class TestVerifySignature:
         assert wahoo_strategy.webhooks is not None
         assert wahoo_strategy.webhooks.verify_signature(MagicMock(), b"not json") is False
         assert wahoo_strategy.webhooks.verify_signature(MagicMock(), b"[]") is False
+        assert wahoo_strategy.webhooks.verify_signature(MagicMock(), b"42") is False
 
 
 class TestDispatch:

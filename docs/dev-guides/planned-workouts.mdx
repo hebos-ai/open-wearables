@@ -91,7 +91,12 @@ curl -X POST "http://localhost:8000/api/v1/providers/wahoo/users/2b1f7c9e-3f0e-4
 | `401` | User not connected to the provider, or must re-authorize (e.g. connected before write scopes were requested) |
 | `422` | Invalid canonical workout, or not expressible by the provider (e.g. `swim` on Wahoo, open step on Wahoo) |
 | `501` | Provider does not support planned workouts |
-| `429` / `5xx` | Provider rate limit or error (passed through) |
+| `502` | The provider did not complete the push. `detail.provider_plan_id` is set when the plan was created but scheduling failed — reuse it rather than re-sending |
+| `429` / other `4xx`/`5xx` | Provider rate limit or error (passed through) |
+
+<Warning>
+The API key is a backend credential with access to every user. This endpoint **writes to the athlete's provider account**, so call it only from your backend, never from end-user clients.
+</Warning>
 
 The push is synchronous and nothing is stored in Open Wearables: keep `provider_plan_id` / `provider_workout_id` if you need to reconcile later. Re-sending creates a new provider object.
 

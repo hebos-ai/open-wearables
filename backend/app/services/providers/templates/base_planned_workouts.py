@@ -30,6 +30,20 @@ class PlannedWorkoutTranslationError(ValueError):
         super().__init__(self.detail)
 
 
+class PlannedWorkoutDeliveryError(RuntimeError):
+    """The provider did not complete the push (HTTP 502).
+
+    ``provider_plan_id`` is set when part of the push already exists on the provider side
+    (e.g. the plan was created but scheduling failed), so the caller can reconcile it
+    instead of creating a duplicate on retry.
+    """
+
+    def __init__(self, provider: str, reason: str, provider_plan_id: str | None = None):
+        self.provider_plan_id = provider_plan_id
+        self.detail = f"{provider}: {reason}"
+        super().__init__(self.detail)
+
+
 class BasePlannedWorkoutsTemplate(ABC):
     """Base template for the planned-workout push capability."""
 

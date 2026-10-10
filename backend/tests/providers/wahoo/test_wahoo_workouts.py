@@ -63,21 +63,21 @@ class TestWahooNormalisation:
 
 
 class TestWahooPaging:
-    def test_stops_at_first_workout_older_than_start(self, wahoo_strategy: WahooStrategy) -> None:
+    def test_stops_when_a_whole_page_predates_start(self, wahoo_strategy: WahooStrategy) -> None:
         workouts = wahoo_strategy.workouts
-        page_1 = {
-            "workouts": [
-                make_workout(3, "2026-07-20T08:00:00.000Z"),  # after end → excluded
-                make_workout(2, "2026-07-10T08:00:00.000Z"),
-                make_workout(1, "2026-06-01T08:00:00.000Z"),  # before start → stop
-            ],
-            "total": 3,
-            "page": 1,
-            "per_page": 3,
-        }
+        pages = [
+            {
+                "workouts": [
+                    make_workout(3, "2026-07-20T08:00:00.000Z"),  # after end → excluded
+                    make_workout(1, "2026-06-01T08:00:00.000Z"),  # older, but page continues
+                    make_workout(2, "2026-07-10T08:00:00.000Z"),  # out of order (late upload)
+                ]
+            },
+            {"workouts": [make_workout(0, "2026-05-01T08:00:00.000Z")] * 3},  # all older → stop
+        ]
         with (
             patch.object(type(workouts), "events_per_page", new=3),
-            patch.object(workouts, "_make_api_request", return_value=page_1) as api,
+            patch.object(workouts, "_make_api_request", side_effect=pages) as api,
         ):
             result = workouts.get_workouts(
                 None,  # type: ignore[arg-type]
@@ -87,8 +87,8 @@ class TestWahooPaging:
             )
 
         assert [w.id for w in result] == [2]
-        api.assert_called_once()
-        assert api.call_args.kwargs["params"] == {"page": 1, "per_page": 3}
+        assert api.call_count == 2
+        assert api.call_args.kwargs["params"] == {"page": 2, "per_page": 3}
 
     def test_reads_next_page_when_page_is_full(self, wahoo_strategy: WahooStrategy) -> None:
         workouts = wahoo_strategy.workouts
@@ -141,3 +141,17 @@ class TestWahooLoadData:
                     db, user.id, start_date="2026-07-01T00:00:00Z", end_date="2026-07-15T00:00:00Z"
                 )
         assert db.query(EventRecord).filter(EventRecord.external_id == "20").count() == 1
+
+    def test_edited_workout_replaces_previous_version(self, db: Session, wahoo_strategy: WahooStrategy) -> None:
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="wahoo")
+        first = WahooWorkoutJSON.model_validate(make_workout(30, "2026-07-12T09:00:00.000Z"))
+        edited = WahooWorkoutJSON.model_validate(
+            make_workout(30, "2026-07-12T09:00:00.000Z", workout_summary=make_summary(duration_total_accum="400.00"))
+        )
+        wahoo_strategy.workouts.save_workout(db, user.id, first)
+        wahoo_strategy.workouts.save_workout(db, user.id, edited)
+
+        stored = db.query(EventRecord).filter(EventRecord.external_id == "30").all()
+        assert len(stored) == 1
+        assert stored[0].duration_seconds == 400

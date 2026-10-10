@@ -1,9 +1,8 @@
 """Provider-agnostic planned (structured) workout, and the push request/result around it.
 
-``PlannedWorkout`` is the canonical shape every provider translator consumes. It mirrors the
-canonical workout already used by Garmin Training API connectors (``name`` / ``sport`` /
-``steps[]`` with ``kind``, ``durationSec`` | ``distanceM`` and an optional ``target``), so the
-same JSON can be sent to any provider. Both ``snake_case`` and ``camelCase`` keys are accepted.
+``PlannedWorkout`` is the canonical shape every provider translator consumes (``name`` /
+``sport`` / ``steps[]`` with ``kind``, ``durationSec`` | ``distanceM`` and an optional
+``target``), so the same JSON can be sent to any provider. Both ``snake_case`` and ``camelCase`` keys are accepted.
 
 Units (absolute values only, so translators never need athlete thresholds):
 
