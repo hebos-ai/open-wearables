@@ -145,6 +145,8 @@ async def get_workout_events(
                     "max_heart_rate_bpm": record.get("max_heart_rate_bpm"),
                     "avg_pace_sec_per_km": record.get("avg_pace_sec_per_km"),
                     "elevation_gain_meters": record.get("elevation_gain_meters"),
+                    "avg_power_watts": record.get("avg_power_watts"),
+                    "avg_cadence": record.get("avg_cadence"),
                     "source": source.get("provider") if isinstance(source, dict) else source,
                 }
             )

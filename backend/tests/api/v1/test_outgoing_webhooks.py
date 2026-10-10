@@ -92,8 +92,9 @@ class TestWebhookEmit:
         assert args[0][1]["data"]["distance_meters"] == 10000.0
         assert args[0][1]["data"]["avg_heart_rate_bpm"] == 155
         # Not reported → present and null (stable payload shape for consumers).
-        assert args[0][1]["data"]["avg_power_watts"] is None
-        assert args[0][1]["data"]["avg_cadence"] is None
+        for key in ("avg_power_watts", "max_power_watts", "avg_speed_mps", "max_speed_mps", "avg_cadence"):
+            assert key in args[0][1]["data"]
+            assert args[0][1]["data"][key] is None
 
     @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
     def test_on_workout_created_includes_power_speed_and_cadence(self, mock_task: MagicMock) -> None:

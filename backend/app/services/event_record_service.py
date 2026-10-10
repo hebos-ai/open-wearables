@@ -487,23 +487,28 @@ class EventRecordService(
         return created_record, True, new_detail
 
     @staticmethod
-    def _power_speed_cadence(details: object | None) -> dict[str, float | None]:
+    def _power_speed_cadence(
+        details: WorkoutDetails | EventRecordDetailCreate | None,
+    ) -> dict[str, float | None]:
         """Power, speed and cadence of a workout detail, as floats (``None`` when not reported).
 
         Shared by the ``workout.created`` webhook and the workouts endpoints so both expose
         the same fields. ``0`` is kept: a reported zero is a measurement, not a missing value.
         """
 
-        def _f(name: str) -> float | None:
-            value = getattr(details, name, None) if details is not None else None
+        def _f(value: Decimal | float | None) -> float | None:
             return float(value) if value is not None else None
 
+        if details is None:
+            return dict.fromkeys(
+                ("avg_power_watts", "max_power_watts", "avg_speed_mps", "max_speed_mps", "avg_cadence"), None
+            )
         return {
-            "avg_power_watts": _f("average_watts"),
-            "max_power_watts": _f("max_watts"),
-            "avg_speed_mps": _f("average_speed"),
-            "max_speed_mps": _f("max_speed"),
-            "avg_cadence": _f("average_cadence"),
+            "avg_power_watts": _f(details.average_watts),
+            "max_power_watts": _f(details.max_watts),
+            "avg_speed_mps": _f(details.average_speed),
+            "max_speed_mps": _f(details.max_speed),
+            "avg_cadence": _f(details.average_cadence),
         }
 
     @staticmethod
