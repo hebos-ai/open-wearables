@@ -19,7 +19,13 @@ from app.models import DataSource, EventRecord
 from app.schemas.model_crud.activities import EventRecordCreate, EventRecordDetailCreate, EventRecordQueryParams
 from app.schemas.model_crud.activities.sleep import SleepStage
 from app.services.event_record_service import event_record_service
-from tests.factories import DataSourceFactory, EventRecordFactory, SleepDetailsFactory, UserFactory
+from tests.factories import (
+    DataSourceFactory,
+    EventRecordFactory,
+    SleepDetailsFactory,
+    UserFactory,
+    WorkoutDetailsFactory,
+)
 
 
 class TestEventRecordServiceCreateDetail:
@@ -140,6 +146,55 @@ class TestEventRecordServiceBulkCreateDetails:
         assert mock_workout.call_count == 2
         dispatched_ids = {c.kwargs["record_id"] for c in mock_workout.call_args_list}
         assert dispatched_ids == {rec1.id, rec2.id}
+
+    def test_workout_webhook_carries_power_speed_and_cadence(self, db: Session) -> None:
+        """A bike workout with a power meter reaches webhook consumers with its power."""
+        data_source = DataSourceFactory(source="wahoo")
+        rec = EventRecordFactory(mapping=data_source, category="workout", type_="cycling")
+        details = [
+            EventRecordDetailCreate(
+                record_id=rec.id,
+                distance=Decimal("45000.0"),
+                average_watts=Decimal("212.5"),
+                max_watts=Decimal("780.0"),
+                average_speed=Decimal("8.33"),
+                max_speed=Decimal("15.20"),
+                average_cadence=Decimal("88.00"),
+            ),
+        ]
+
+        with (
+            patch("app.services.event_record_service.svix_service.is_enabled", return_value=True),
+            patch("app.services.event_record_service.on_workout_created") as mock_workout,
+        ):
+            event_record_service.bulk_create_details(db, details, detail_type="workout")
+            db.commit()
+
+        kwargs = mock_workout.call_args.kwargs
+        assert kwargs["avg_power_watts"] == 212.5
+        assert kwargs["max_power_watts"] == 780.0
+        assert kwargs["avg_speed_mps"] == 8.33
+        assert kwargs["max_speed_mps"] == 15.2
+        assert kwargs["avg_cadence"] == 88.0
+
+    def test_workout_detailed_exposes_power_speed_and_cadence(self, db: Session) -> None:
+        data_source = DataSourceFactory(source="wahoo")
+        rec = EventRecordFactory(mapping=data_source, category="workout", type_="cycling")
+        WorkoutDetailsFactory(
+            event_record=rec,
+            average_watts=Decimal("212.5"),
+            max_watts=None,
+            average_speed=Decimal("8.33"),
+            average_cadence=Decimal("88.00"),
+        )
+
+        detailed = event_record_service.get_workout_detailed(db, data_source.user_id, rec.id)
+
+        assert detailed is not None
+        assert detailed.avg_power_watts == 212.5
+        assert detailed.max_power_watts is None
+        assert detailed.avg_speed_mps == 8.33
+        assert detailed.avg_cadence == 88.0
 
     def test_bulk_create_details_silent_when_svix_disabled(self, db: Session) -> None:
         data_source = DataSourceFactory(source="apple")

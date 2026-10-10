@@ -88,6 +88,11 @@ EXAMPLE_PAYLOADS: dict[str, dict] = {
             "max_heart_rate_bpm": 178,
             "avg_pace_sec_per_km": 424,
             "elevation_gain_meters": 120.0,
+            "avg_power_watts": None,
+            "max_power_watts": None,
+            "avg_speed_mps": 2.36,
+            "max_speed_mps": 3.9,
+            "avg_cadence": 172.0,
         },
     },
     WebhookEventType.SLEEP_CREATED: {

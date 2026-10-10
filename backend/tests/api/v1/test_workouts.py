@@ -8,11 +8,18 @@ Tests the /api/v1/users/{user_id}/workouts endpoint including:
 """
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from tests.factories import ApiKeyFactory, DataSourceFactory, EventRecordFactory, UserFactory
+from tests.factories import (
+    ApiKeyFactory,
+    DataSourceFactory,
+    EventRecordFactory,
+    UserFactory,
+    WorkoutDetailsFactory,
+)
 from tests.utils import api_key_headers
 
 
@@ -57,6 +64,41 @@ class TestWorkoutsEndpoints:
         assert len(data) == 2
         assert any(w["id"] == str(workout1.id) for w in data)
         assert any(w["id"] == str(workout2.id) for w in data)
+
+    def test_get_workouts_includes_power_speed_and_cadence(self, client: TestClient, db: Session) -> None:
+        """A bike workout exposes its power, speed and cadence; a workout without them returns null."""
+        user = UserFactory()
+        mapping = DataSourceFactory(user=user)
+        ride = EventRecordFactory(mapping=mapping, category="workout", type_="cycling", duration_seconds=5400)
+        WorkoutDetailsFactory(
+            event_record=ride,
+            average_watts=Decimal("212.5"),
+            max_watts=Decimal("780.0"),
+            average_speed=Decimal("8.33"),
+            max_speed=Decimal("15.20"),
+            average_cadence=Decimal("88.00"),
+        )
+        bare = EventRecordFactory(mapping=mapping, category="workout", type_="running", duration_seconds=1800)
+        headers = api_key_headers(ApiKeyFactory().id)
+        now = datetime.now(timezone.utc)
+
+        response = client.get(
+            f"/api/v1/users/{user.id}/events/workouts",
+            headers=headers,
+            params={
+                "start_date": (now - timedelta(days=30)).isoformat(),
+                "end_date": (now + timedelta(days=1)).isoformat(),
+            },
+        )
+
+        assert response.status_code == 200
+        by_id = {w["id"]: w for w in response.json()["data"]}
+        assert by_id[str(ride.id)]["avg_power_watts"] == 212.5
+        assert by_id[str(ride.id)]["max_power_watts"] == 780.0
+        assert by_id[str(ride.id)]["avg_speed_mps"] == 8.33
+        assert by_id[str(ride.id)]["max_speed_mps"] == 15.2
+        assert by_id[str(ride.id)]["avg_cadence"] == 88.0
+        assert by_id[str(bare.id)]["avg_power_watts"] is None
 
     def test_get_workouts_empty_list(self, client: TestClient, db: Session) -> None:
         """Test retrieving workouts for a user with no workouts."""

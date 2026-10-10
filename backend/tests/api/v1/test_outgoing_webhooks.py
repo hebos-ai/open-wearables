@@ -91,6 +91,37 @@ class TestWebhookEmit:
         assert args[0][1]["data"]["calories_kcal"] == 450.0
         assert args[0][1]["data"]["distance_meters"] == 10000.0
         assert args[0][1]["data"]["avg_heart_rate_bpm"] == 155
+        # Not reported → present and null (stable payload shape for consumers).
+        for key in ("avg_power_watts", "max_power_watts", "avg_speed_mps", "max_speed_mps", "avg_cadence"):
+            assert key in args[0][1]["data"]
+            assert args[0][1]["data"][key] is None
+
+    @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
+    def test_on_workout_created_includes_power_speed_and_cadence(self, mock_task: MagicMock) -> None:
+        on_workout_created(
+            record_id=uuid4(),
+            user_id=uuid4(),
+            provider="wahoo",
+            device="ELEMNT BOLT",
+            workout_type="cycling",
+            start_time="2026-10-10T07:00:00+00:00",
+            end_time="2026-10-10T08:30:00+00:00",
+            zone_offset="+02:00",
+            duration_seconds=5400,
+            distance_meters=45000.0,
+            avg_power_watts=212.5,
+            max_power_watts=780.0,
+            avg_speed_mps=8.33,
+            max_speed_mps=15.2,
+            avg_cadence=88.0,
+        )
+        data = mock_task.delay.call_args[0][1]["data"]
+        assert data["source"]["provider"] == "wahoo"
+        assert data["avg_power_watts"] == 212.5
+        assert data["max_power_watts"] == 780.0
+        assert data["avg_speed_mps"] == 8.33
+        assert data["max_speed_mps"] == 15.2
+        assert data["avg_cadence"] == 88.0
 
     @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
     def test_on_sleep_created_dispatches(self, mock_task: MagicMock) -> None:

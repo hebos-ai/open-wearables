@@ -26,6 +26,13 @@ class Workout(BaseModel):
     max_heart_rate_bpm: int | None = None
     avg_pace_sec_per_km: int | float | None = None
     elevation_gain_meters: float | None = None
+    avg_power_watts: float | None = Field(None, description="Average power in watts (cycling power meter)")
+    max_power_watts: float | None = Field(None, description="Maximum power in watts")
+    avg_speed_mps: float | None = Field(None, description="Average speed in metres per second")
+    max_speed_mps: float | None = Field(None, description="Maximum speed in metres per second")
+    avg_cadence: float | None = Field(
+        None, description="Average cadence as reported by the provider (rpm for cycling, spm for running)"
+    )
 
 
 class WorkoutDetailed(Workout):

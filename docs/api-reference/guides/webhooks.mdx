@@ -291,13 +291,18 @@ Every payload envelope has `type` (the event name as a string) and `data`.
     "avg_heart_rate_bpm": 158,
     "max_heart_rate_bpm": 182,
     "avg_pace_sec_per_km": 353,
-    "elevation_gain_meters": 95.0
+    "elevation_gain_meters": 95.0,
+    "avg_power_watts": null,
+    "max_power_watts": null,
+    "avg_speed_mps": 2.83,
+    "max_speed_mps": 4.1,
+    "avg_cadence": 174.0
   }
 }
 ```
 
 <Note>
-  Fields like `calories_kcal`, `distance_meters`, and heart-rate fields are `null` when the provider did not report them.
+  Fields like `calories_kcal`, `distance_meters`, heart-rate, power, speed and cadence fields are `null` when the provider did not report them. `avg_power_watts` / `max_power_watts` come from a power meter (typically cycling); `avg_cadence` is in the provider's unit (rpm for cycling, steps per minute for running).
 </Note>
 
 ### `sleep.created`
