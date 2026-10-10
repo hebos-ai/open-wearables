@@ -614,6 +614,11 @@ export interface EventRecordResponse {
   // Elevation and pace
   elevation_gain_meters?: number | null;
   avg_pace_sec_per_km?: number | null;
+  avg_power_watts?: number | null;
+  max_power_watts?: number | null;
+  avg_speed_mps?: number | null;
+  max_speed_mps?: number | null;
+  avg_cadence?: number | null;
 
   // Legacy fields (keeping for compatibility if needed, but marked optional)
   user_id?: string;

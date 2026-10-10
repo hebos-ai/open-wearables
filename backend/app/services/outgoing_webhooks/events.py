@@ -75,6 +75,11 @@ def on_workout_created(
     max_heart_rate_bpm: int | None = None,
     elevation_gain_meters: float | None = None,
     avg_pace_sec_per_km: int | None = None,
+    avg_power_watts: float | None = None,
+    max_power_watts: float | None = None,
+    avg_speed_mps: float | None = None,
+    max_speed_mps: float | None = None,
+    avg_cadence: float | None = None,
 ) -> None:
     _dispatch(
         WebhookEventType.WORKOUT_CREATED,
@@ -95,6 +100,11 @@ def on_workout_created(
                 "max_heart_rate_bpm": max_heart_rate_bpm,
                 "avg_pace_sec_per_km": avg_pace_sec_per_km,
                 "elevation_gain_meters": elevation_gain_meters,
+                "avg_power_watts": avg_power_watts,
+                "max_power_watts": max_power_watts,
+                "avg_speed_mps": avg_speed_mps,
+                "max_speed_mps": max_speed_mps,
+                "avg_cadence": avg_cadence,
             },
         },
         idempotency_key=f"workout.created.{record_id}",
