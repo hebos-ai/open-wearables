@@ -128,14 +128,14 @@ class WahooPlannedWorkouts(BasePlannedWorkoutsTemplate):
         return SPORTS[key]
 
     @staticmethod
-    def _interval(index: int, step: PlannedWorkoutStep) -> dict[str, Any]:
+    def _interval(index: int, step: PlannedWorkoutStep, where: str = "") -> dict[str, Any]:
         if step.duration_sec is not None:
             trigger_type, trigger_value = "time", _number(step.duration_sec)
         elif step.distance_m is not None:
             trigger_type, trigger_value = "distance", _number(step.distance_m)
         else:
             raise PlannedWorkoutTranslationError(
-                "wahoo", f"step {index + 1} has no duration_sec or distance_m (Wahoo has no open steps)"
+                "wahoo", f"step {index + 1}{where} has no duration_sec or distance_m (Wahoo has no open steps)"
             )
 
         interval: dict[str, Any] = {
@@ -152,11 +152,11 @@ class WahooPlannedWorkouts(BasePlannedWorkoutsTemplate):
     def _intervals(self, workout: PlannedWorkout) -> list[dict[str, Any]]:
         intervals: list[dict[str, Any]] = []
         index = 0  # step number in the canonical workout, for error messages
-        for item in workout.steps:
+        for position, item in enumerate(workout.steps, start=1):
             if isinstance(item, PlannedWorkoutRepeat):
                 children = []
-                for step in item.steps:
-                    children.append(self._interval(index, step))
+                for child, step in enumerate(item.steps, start=1):
+                    children.append(self._interval(index, step, f" (repeat group {position}, step {child})"))
                     index += 1
                 intervals.append(
                     {
@@ -237,26 +237,42 @@ class WahooPlannedWorkouts(BasePlannedWorkoutsTemplate):
         scheduled_before = existing.scheduled_at if existing else None
 
         # 1. The plan: update the one we already sent; create it only if there is none (or it is gone).
-        if plan_id is not None and self._gone(
-            lambda: self._make_api_request(db, user_id, f"/v1/plans/{plan_id}", method="PUT", form_data=plan_form)
-        ):
-            plan_id = None
-        if plan_id is None:
-            plan_response = self._make_api_request(db, user_id, "/v1/plans", form_data=plan_form)
-            new_id = plan_response.get("id") if isinstance(plan_response, dict) else None
-            if new_id is None:
-                raise PlannedWorkoutDeliveryError("wahoo", "POST /v1/plans returned no plan id")
-            plan_id = str(new_id)
-            self._record(db, user_id, external_id, plan_id, workout_id, scheduled_before)
+        try:
+            if plan_id is not None and self._gone(
+                lambda: self._make_api_request(db, user_id, f"/v1/plans/{plan_id}", method="PUT", form_data=plan_form)
+            ):
+                plan_id = None
+            if plan_id is None:
+                plan_response = self._make_api_request(db, user_id, "/v1/plans", form_data=plan_form)
+                new_id = plan_response.get("id") if isinstance(plan_response, dict) else None
+                if new_id is None:
+                    raise PlannedWorkoutDeliveryError("wahoo", "POST /v1/plans returned no plan id")
+                plan_id = str(new_id)
+                self._record(db, user_id, external_id, plan_id, workout_id, scheduled_before)
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                raise
+            raise PlannedWorkoutDeliveryError(
+                "wahoo", f"plan not saved: {exc.detail}", provider_plan_id=plan_id
+            ) from exc
 
         # 2. Library only: an earlier scheduled workout for this id is taken off the calendar.
         if request.scheduled_at is None:
             if workout_id is not None:
-                self._gone(
-                    lambda: self._make_api_request(
-                        db, user_id, f"/v1/workouts/{workout_id}", method="DELETE", expect_json=False
+                try:
+                    self._gone(
+                        lambda: self._make_api_request(
+                            db, user_id, f"/v1/workouts/{workout_id}", method="DELETE", expect_json=False
+                        )
                     )
-                )
+                except HTTPException as exc:
+                    if exc.status_code == 401:
+                        raise
+                    raise PlannedWorkoutDeliveryError(
+                        "wahoo",
+                        f"plan saved but the old scheduled workout was not removed: {exc.detail}",
+                        provider_plan_id=plan_id,
+                    ) from exc
             self._record(db, user_id, external_id, plan_id, None, None)
             return PlannedWorkoutPushResult(
                 provider="wahoo",
@@ -284,9 +300,15 @@ class WahooPlannedWorkouts(BasePlannedWorkoutsTemplate):
             if workout_id is None:
                 workout_response = self._make_api_request(db, user_id, "/v1/workouts", form_data=workout_form)
                 new_workout = workout_response.get("id") if isinstance(workout_response, dict) else None
-                workout_id = str(new_workout) if new_workout is not None else None
+                if new_workout is None:
+                    # Wahoo may have created it, but without its id a re-send would duplicate it.
+                    self._record(db, user_id, external_id, plan_id, None, None)
+                    raise PlannedWorkoutDeliveryError(
+                        "wahoo", "POST /v1/workouts returned no workout id", provider_plan_id=plan_id
+                    )
+                workout_id = str(new_workout)
         except HTTPException as exc:
-            self._record(db, user_id, external_id, plan_id, workout_id, scheduled_before)
+            self._record(db, user_id, external_id, plan_id, workout_id, scheduled_before if workout_id else None)
             if exc.status_code == 401:
                 raise
             # The plan exists in the athlete's library: surface its id so a retry can reuse it.
@@ -305,6 +327,16 @@ class WahooPlannedWorkouts(BasePlannedWorkoutsTemplate):
 
     def remove(self, db: DbSession, user_id: UUID, existing: PlannedWorkoutPush) -> None:
         """Take the workout off the calendar, then drop the plan from the library (404 = already gone)."""
+        try:
+            self._remove(db, user_id, existing)
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                raise
+            raise PlannedWorkoutDeliveryError(
+                "wahoo", f"delete failed: {exc.detail}", provider_plan_id=existing.provider_plan_id
+            ) from exc
+
+    def _remove(self, db: DbSession, user_id: UUID, existing: PlannedWorkoutPush) -> None:
         if existing.provider_workout_id is not None:
             workout_id = existing.provider_workout_id
             self._gone(

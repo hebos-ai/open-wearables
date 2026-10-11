@@ -512,7 +512,66 @@ class TestReplaceAndDelete:
         boom = HTTPException(status_code=503, detail="Wahoo API error: down")
         with (
             patch.object(planner, "_make_api_request", side_effect=boom),
-            pytest.raises(HTTPException),
+            pytest.raises(PlannedWorkoutDeliveryError, match="delete failed"),
         ):
             planner.delete(None, self.USER, "hebos-tce-77")  # type: ignore[arg-type]
         assert planner.pushes.get(None, self.USER, "wahoo", "hebos-tce-77") is not None  # type: ignore[arg-type]
+
+    def test_provider_errors_other_than_401_become_delivery_errors(self, planner: WahooPlannedWorkouts) -> None:
+        api = FakeWahooApi()
+        self._push(planner, api, scheduled_at="2026-10-13T18:30:00+02:00")
+
+        def rejects_plan_update(*args: Any, **kwargs: Any) -> Any:
+            if kwargs.get("method") == "PUT":
+                raise HTTPException(status_code=422, detail="Wahoo API error: invalid plan")
+            return api(*args, **kwargs)
+
+        with (
+            patch.object(planner, "_make_api_request", side_effect=rejects_plan_update),
+            pytest.raises(PlannedWorkoutDeliveryError, match="plan not saved") as exc,
+        ):
+            planner.push(None, self.USER, _request(SERIES, external_id="hebos-tce-77"))  # type: ignore[arg-type]
+        assert exc.value.provider_plan_id == "100"
+
+        unauthorized = HTTPException(status_code=401, detail="re-authorize")
+        with (
+            patch.object(planner, "_make_api_request", side_effect=unauthorized),
+            pytest.raises(HTTPException) as exc401,
+        ):
+            planner.delete(None, self.USER, "hebos-tce-77")  # type: ignore[arg-type]
+        assert exc401.value.status_code == 401
+
+    def test_workout_without_id_is_a_delivery_error_and_not_reported_as_scheduled(
+        self, planner: WahooPlannedWorkouts
+    ) -> None:
+        responses = iter([{"id": 777}, {}])
+        with (
+            patch.object(planner, "_make_api_request", side_effect=lambda *a, **k: next(responses)),
+            pytest.raises(PlannedWorkoutDeliveryError, match="no workout id") as exc,
+        ):
+            planner.push(
+                None,  # type: ignore[arg-type]
+                self.USER,
+                _request(SERIES, external_id="sin-id", scheduled_at="2026-10-13T07:00:00+02:00"),
+            )
+        assert exc.value.provider_plan_id == "777"
+        row = planner.pushes.get(None, self.USER, "wahoo", "sin-id")  # type: ignore[arg-type]
+        assert row is not None
+        assert row.provider_workout_id is None
+        assert row.scheduled_at is None
+
+    def test_open_step_inside_a_group_names_the_group(self, planner: WahooPlannedWorkouts) -> None:
+        workout = {
+            "name": "x",
+            "sport": "run",
+            "steps": [
+                {
+                    "kind": "repeat",
+                    "repetitions": 2,
+                    "steps": [{"kind": "interval", "durationSec": 9}, {"kind": "rest"}],
+                }
+            ],
+        }
+        request = _request(workout)
+        with pytest.raises(PlannedWorkoutTranslationError, match=r"step 2 \(repeat group 1, step 2\)"):
+            planner.translate(request.workout, request)

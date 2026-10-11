@@ -94,8 +94,8 @@ curl -X POST "http://localhost:8000/api/v1/providers/wahoo/users/2b1f7c9e-3f0e-4
 | `401` | User not connected to the provider, or must re-authorize (e.g. connected before write scopes were requested) |
 | `422` | Invalid canonical workout, or not expressible by the provider (e.g. `swim` on Wahoo, open step on Wahoo) |
 | `501` | Provider does not support planned workouts |
-| `502` | The provider did not complete the push. `detail.provider_plan_id` is set when the plan was created but scheduling failed — reuse it rather than re-sending |
-| `429` / other `4xx`/`5xx` | Provider rate limit or error (passed through) |
+| `502` | The provider did not complete the push (any provider error other than `401`). `detail.provider_plan_id` is set when the plan exists; re-send with the same `externalId` and that plan is updated, not duplicated |
+| `503` | Another push/delete of the same `externalId` is still running (waited 60 s); retry later |
 
 <Warning>
 The API key is a backend credential with access to every user. This endpoint **writes to the athlete's provider account**, so call it only from your backend, never from end-user clients.
@@ -114,7 +114,7 @@ The push is synchronous. Open Wearables remembers what each `externalId` became 
 {"provider": "wahoo", "external_id": "plan-2026-10-12-sweetspot", "deleted": true}
 ```
 
-Idempotent: an `externalId` with nothing on record answers `200` with `deleted: false`. Objects already gone on the provider (`404`) count as removed. `401` not connected / re-authorize, `501` provider without planned workouts; other provider errors are passed through and the record is kept so the delete can be retried.
+Idempotent: an `externalId` with nothing on record answers `200` with `deleted: false`. Objects already gone on the provider (`404`) count as removed. `401` not connected / re-authorize, `501` provider without planned workouts, `502` any other provider error (the record is kept so the delete can be retried), `503` another push/delete of the same id is running.
 
 ## Wahoo mapping
 

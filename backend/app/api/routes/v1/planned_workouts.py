@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Path, status
 
 from app.database import DbSession
+from app.repositories.planned_workout_push_repository import PlannedWorkoutBusyError
 from app.schemas.enums import ProviderName
 from app.schemas.planned_workouts import (
     PlannedWorkoutDeleteResult,
@@ -42,8 +43,10 @@ def push_planned_workout(
     - **501**: the provider does not support planned workouts
     - **422**: the workout cannot be expressed in the provider's format (e.g. unsupported sport)
     - **401**: the user is not connected to the provider or must re-authorize
-    - **502**: the provider did not complete the push; `provider_plan_id` is included when the
-      plan was created but could not be scheduled (reuse it instead of re-sending)
+    - **502**: the provider did not complete the push (any provider error other than 401);
+      `provider_plan_id` is included when the plan exists but could not be scheduled.
+      Re-send with the same `external_id`: it updates that plan instead of creating another one
+    - **503**: another push/delete of the same `external_id` is still running; retry later
 
     Re-sending the same `external_id` REPLACES the workout (content and date) on the provider
     instead of creating another one.
@@ -67,6 +70,8 @@ def push_planned_workout(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
     except UnsupportedProviderError as exc:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=exc.detail) from exc
+    except PlannedWorkoutBusyError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.delete("/{provider}/users/{user_id}/planned-workouts/{external_id}")
@@ -83,6 +88,8 @@ def delete_planned_workout(
 
     - **501**: the provider does not support planned workouts
     - **401**: the user is not connected to the provider or must re-authorize
+    - **502**: the provider failed (any error other than 401/404); the record is kept, retry the delete
+    - **503**: another push/delete of the same `external_id` is still running; retry later
     """
     strategy = factory.get_provider(provider.value)
     if not strategy.supports_planned_workouts or strategy.planned_workouts is None:
@@ -92,5 +99,10 @@ def delete_planned_workout(
         )
     try:
         return strategy.planned_workouts.delete(db, user_id, external_id)
+    except PlannedWorkoutDeliveryError as exc:
+        detail: dict[str, str | None] = {"message": exc.detail, "provider_plan_id": exc.provider_plan_id}
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
     except UnsupportedProviderError as exc:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=exc.detail) from exc
+    except PlannedWorkoutBusyError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc

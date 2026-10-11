@@ -180,3 +180,70 @@ def test_delete_of_a_known_workout_when_wahoo_is_disconnected_is_401(client: Tes
     db.flush()
     response = client.delete(_delete_url("wahoo", user.id, "hebos-tce-77"), headers=headers)
     assert response.status_code == 401
+
+
+def test_delete_provider_failure_is_502_and_keeps_the_record(client: TestClient, db: Session) -> None:
+    from fastapi import HTTPException
+
+    from app.models import PlannedWorkoutPush
+    from tests.providers.wahoo.test_wahoo_planned_workouts import FakeWahooApi
+
+    user = UserFactory()
+    UserConnectionFactory(user=user, provider="wahoo")
+    headers = {"X-Open-Wearables-API-Key": ApiKeyFactory().id}
+    with patch(API, side_effect=FakeWahooApi()):
+        client.post(_url("wahoo", user.id), json=SERIES_BODY, headers=headers)
+    with patch(API, side_effect=HTTPException(status_code=500, detail="Wahoo API error: boom")):
+        response = client.delete(_delete_url("wahoo", user.id, "hebos-tce-77"), headers=headers)
+    assert response.status_code == 502
+    assert db.query(PlannedWorkoutPush).filter_by(user_id=user.id).count() == 1
+
+
+def test_same_external_id_is_serialized_and_a_long_wait_is_503(db: Session) -> None:
+    """Real advisory lock: while one push of an external_id runs, another one waits (and gives up → busy)."""
+    import threading
+    from uuid import uuid4
+
+    import pytest
+
+    from app.repositories.planned_workout_push_repository import (
+        PlannedWorkoutBusyError,
+        PlannedWorkoutPushRepository,
+    )
+
+    repo = PlannedWorkoutPushRepository()
+    user_id = uuid4()
+    holding = threading.Event()
+    release = threading.Event()
+
+    def first() -> None:
+        with repo.lock(db, user_id, "wahoo", "hebos-tce-77"):
+            holding.set()
+            release.wait(5)
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    try:
+        assert holding.wait(5)
+        with pytest.raises(PlannedWorkoutBusyError), repo.lock(db, user_id, "wahoo", "hebos-tce-77", wait_seconds=0.2):
+            pass
+        # Another external_id is not blocked.
+        with repo.lock(db, user_id, "wahoo", "hebos-tce-78", wait_seconds=0.2):
+            pass
+    finally:
+        release.set()
+        thread.join(5)
+    # Once released, the same id can be locked again (the unlock reached Postgres).
+    with repo.lock(db, user_id, "wahoo", "hebos-tce-77", wait_seconds=0.2):
+        pass
+
+
+def test_busy_lock_is_503(client: TestClient, db: Session) -> None:
+    from app.repositories.planned_workout_push_repository import PlannedWorkoutBusyError
+
+    user = UserFactory()
+    headers = {"X-Open-Wearables-API-Key": ApiKeyFactory().id}
+    busy = PlannedWorkoutBusyError("another push/delete of 'hebos-tce-77' is in progress")
+    with patch("app.repositories.planned_workout_push_repository.PlannedWorkoutPushRepository.lock", side_effect=busy):
+        assert client.post(_url("wahoo", user.id), json=SERIES_BODY, headers=headers).status_code == 503
+        assert client.delete(_delete_url("wahoo", user.id, "hebos-tce-77"), headers=headers).status_code == 503
