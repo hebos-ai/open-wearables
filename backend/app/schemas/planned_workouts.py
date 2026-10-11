@@ -1,8 +1,11 @@
 """Provider-agnostic planned (structured) workout, and the push request/result around it.
 
 ``PlannedWorkout`` is the canonical shape every provider translator consumes (``name`` /
-``sport`` / ``steps[]`` with ``kind``, ``durationSec`` | ``distanceM`` and an optional
-``target``), so the same JSON can be sent to any provider. Both ``snake_case`` and ``camelCase`` keys are accepted.
+``sport`` / ``steps[]`` with ``kind``, ``durationSec`` | ``distanceM``, an optional
+``target`` and optional ``name`` / ``note``), so the same JSON can be sent to any provider.
+``steps[]`` may also hold repeat groups ``{"kind": "repeat", "repetitions": n, "steps": [...]}``
+(one level deep), which providers map to their native repeats instead of flattening.
+Both ``snake_case`` and ``camelCase`` keys are accepted.
 
 Units (absolute values only, so translators never need athlete thresholds):
 
@@ -14,7 +17,7 @@ Units (absolute values only, so translators never need athlete thresholds):
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
@@ -61,12 +64,27 @@ class PlannedWorkoutStep(BaseModel):
     duration_sec: int | None = Field(None, gt=0)
     distance_m: float | None = Field(None, gt=0)
     target: PlannedWorkoutTarget | None = None
+    name: str | None = Field(None, min_length=1, max_length=100, description="Step label, e.g. 'Work', 'Jog'")
+    note: str | None = Field(None, min_length=1, max_length=500, description="Free-text note for the step")
 
     @model_validator(mode="after")
     def _single_end_condition(self) -> "PlannedWorkoutStep":
         if self.duration_sec is not None and self.distance_m is not None:
             raise ValueError("a step ends either by duration_sec or by distance_m, not both")
         return self
+
+
+class PlannedWorkoutRepeat(BaseModel):
+    """A block of steps done ``repetitions`` times in order (e.g. 5 × (3:30 work + 3:00 jog)). One level deep."""
+
+    model_config = _CANONICAL_CONFIG
+
+    kind: Literal["repeat"]
+    repetitions: int = Field(ge=1, le=99)
+    steps: list[PlannedWorkoutStep] = Field(min_length=1, max_length=50)
+
+
+PlannedWorkoutItem = Annotated[PlannedWorkoutRepeat | PlannedWorkoutStep, Field(discriminator="kind")]
 
 
 class PlannedWorkout(BaseModel):
@@ -78,7 +96,18 @@ class PlannedWorkout(BaseModel):
     # Free-form sport key. Translators recognise at least: run, bike, mtb, swim, strength
     # (and common synonyms such as running / cycling); unsupported sports are rejected per provider.
     sport: str = Field(min_length=1, max_length=40)
-    steps: list[PlannedWorkoutStep] = Field(min_length=1, max_length=200)
+    steps: list[PlannedWorkoutItem] = Field(min_length=1, max_length=200)
+
+    def flat_steps(self) -> list[PlannedWorkoutStep]:
+        """Every step in execution order, with repeat groups expanded."""
+        out: list[PlannedWorkoutStep] = []
+        for item in self.steps:
+            if isinstance(item, PlannedWorkoutRepeat):
+                for _ in range(item.repetitions):
+                    out.extend(item.steps)
+            else:
+                out.append(item)
+        return out
 
 
 class PlannedWorkoutPushRequest(BaseModel):
@@ -95,7 +124,11 @@ class PlannedWorkoutPushRequest(BaseModel):
         None,
         min_length=1,
         max_length=100,
-        description="Caller's stable id for this workout; reused as idempotency key where the provider supports it.",
+        pattern=r"^[A-Za-z0-9._:-]+$",
+        description=(
+            "Caller's stable id for this workout. Re-sending the same id REPLACES the workout (content and date) "
+            "on the provider instead of creating another one, and it is the key used to delete it."
+        ),
     )
     description: str | None = Field(None, max_length=1000)
 
@@ -115,3 +148,11 @@ class PlannedWorkoutPushResult(BaseModel):
     provider_plan_id: str | None = None
     provider_workout_id: str | None = None
     scheduled_at: datetime | None = None
+
+
+class PlannedWorkoutDeleteResult(BaseModel):
+    """Result of removing a previously pushed workout. ``deleted`` is false when nothing was known for that id."""
+
+    provider: str
+    external_id: str
+    deleted: bool

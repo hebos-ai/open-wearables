@@ -30,12 +30,15 @@ The same JSON is accepted for every provider, in `camelCase` or `snake_case`. It
 |-------|------|-------|
 | `name` | string (1–100) | |
 | `sport` | string | `bike`, `mtb`, `indoor_cycling`, `run`, `trail_running`, `treadmill`, … Each provider rejects sports it cannot express |
-| `steps[]` | 1–200 steps | |
+| `steps[]` | 1–200 items | Steps, or repeat groups (below) |
 | `steps[].kind` | `warmup` · `interval` · `recovery` · `cooldown` · `rest` | |
 | `steps[].durationSec` | integer > 0 | Ends the step after this time… |
 | `steps[].distanceM` | number > 0 | …or after this distance (never both). With neither, the step is open (lap button) |
 | `steps[].target.type` | `power` · `hr` · `pace` | Optional |
 | `steps[].target.low` / `high` | number > 0 | At least one; a single bound means "hold this value" |
+| `steps[].name` | string (1–100) | Optional step label ("Work", "Jog") |
+| `steps[].note` | string (1–500) | Optional note (providers without a per-step note field drop it) |
+| `steps[]` repeat group | `{"kind": "repeat", "repetitions": 1–99, "steps": [1–50 steps]}` | The group runs `repetitions` times, in order. One level deep. Providers map it to their **native** repeat (not flattened) |
 
 **Units are absolute** so translators never need athlete thresholds: power in **watts**, heart rate in **bpm**, pace as **speed in m/s** (same convention as Garmin Training API).
 
@@ -69,7 +72,7 @@ curl -X POST "http://localhost:8000/api/v1/providers/wahoo/users/2b1f7c9e-3f0e-4
 |-------|-------|
 | `workout` | Canonical workout (above) |
 | `scheduledAt` | Optional, timezone-aware. Without it the workout only goes to the athlete's library |
-| `externalId` | Optional stable id from your system; sent to the provider as its external id / token. Generated when omitted |
+| `externalId` | Optional stable id from your system (`[A-Za-z0-9._:-]`, ≤ 100); sent to the provider as its external id / token. **Re-sending the same id replaces** the workout. Generated when omitted |
 | `description` | Optional |
 
 **201** response:
@@ -98,7 +101,20 @@ curl -X POST "http://localhost:8000/api/v1/providers/wahoo/users/2b1f7c9e-3f0e-4
 The API key is a backend credential with access to every user. This endpoint **writes to the athlete's provider account**, so call it only from your backend, never from end-user clients.
 </Warning>
 
-The push is synchronous and nothing is stored in Open Wearables: keep `provider_plan_id` / `provider_workout_id` if you need to reconcile later. Re-sending creates a new provider object.
+The push is synchronous. Open Wearables remembers what each `externalId` became on the provider (`planned_workout_push` table), so:
+
+- **Re-sending the same `externalId` replaces** the workout: the same provider plan/workout is updated (content and date), never duplicated. Objects the athlete deleted on the provider side are re-created. Without `scheduledAt`, an earlier scheduled entry is taken off the calendar.
+- Pushes and deletes of one `externalId` are serialized (Postgres advisory lock).
+
+## Delete
+
+`DELETE /api/v1/providers/{provider}/users/{user_id}/planned-workouts/{externalId}` (API key required) removes the workout from the athlete's calendar and library.
+
+```json
+{"provider": "wahoo", "external_id": "plan-2026-10-12-sweetspot", "deleted": true}
+```
+
+Idempotent: an `externalId` with nothing on record answers `200` with `deleted: false`. Objects already gone on the provider (`404`) count as removed. `401` not connected / re-authorize, `501` provider without planned workouts; other provider errors are passed through and the record is kept so the delete can be retried.
 
 ## Wahoo mapping
 
@@ -108,6 +124,10 @@ The push is synchronous and nothing is stored in Open Wearables: keep `provider_
 | `kind` | `intensity_type`: `wu` / `active` / `recover` / `cd` / `rest` |
 | `durationSec` / `distanceM` | `exit_trigger_type` `time` / `distance` |
 | `power` / `hr` / `pace` | target `watts` / `hr` / `speed` |
+| `name` | interval `name` (default: the kind, e.g. "Warm up"). `note` is not sent: plan.json has no per-step note |
+| repeat group | parent interval with `exit_trigger_type: "repeat"`, `exit_trigger_value: repetitions` and the group's steps in nested `intervals` |
+
+Re-send: `PUT /v1/plans/{id}` and `PUT /v1/workouts/{id}` (a `404` re-creates with `POST`). Delete: `DELETE /v1/workouts/{id}`, then `DELETE /v1/plans/{id}`.
 
 Scheduling uses `workout_type_id` 0 (biking), 13 (MTB), 61 (indoor trainer), 1 (running), 4 (trail), 5 (treadmill); `minutes` is estimated from step durations (distance steps count only when they have a pace target).
 
@@ -115,6 +135,7 @@ Scheduling uses `workout_type_id` 0 (biking), 13 (MTB), 61 (indoor trainer), 1 (
 
 1. Subclass `BasePlannedWorkoutsTemplate` (`app/services/providers/templates/base_planned_workouts.py`) in `app/services/providers/<provider>/planned_workouts.py`.
 2. Implement `translate()` — **pure**, canonical → provider payload; raise `PlannedWorkoutTranslationError` for anything the provider cannot express (never approximate silently).
-3. Implement `send()` with `self._make_api_request(..., json_data=... | form_data=...)` and return a `PlannedWorkoutPushResult`.
-4. Set `self.planned_workouts = YourPlannedWorkouts(...)` in the strategy; `supports_planned_workouts` becomes `True` and the endpoint starts accepting the provider.
-5. Unit-test `translate()` with plain objects and `send()` with a patched `_make_api_request`.
+3. Implement `send()` with `self._make_api_request(..., json_data=... | form_data=...)` and return a `PlannedWorkoutPushResult`. When `existing` is given (same `externalId` pushed before), **update** those provider objects instead of creating new ones, and call `self._record(...)` as soon as each provider object exists.
+4. Implement `remove()`: delete what `existing` points to (treat `404` as already gone).
+5. Set `self.planned_workouts = YourPlannedWorkouts(...)` in the strategy; `supports_planned_workouts` becomes `True` and the endpoint starts accepting the provider.
+6. Unit-test `translate()` with plain objects and `send()` with a patched `_make_api_request`.

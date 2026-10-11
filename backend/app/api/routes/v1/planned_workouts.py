@@ -5,7 +5,11 @@ from fastapi import APIRouter, HTTPException, Path, status
 
 from app.database import DbSession
 from app.schemas.enums import ProviderName
-from app.schemas.planned_workouts import PlannedWorkoutPushRequest, PlannedWorkoutPushResult
+from app.schemas.planned_workouts import (
+    PlannedWorkoutDeleteResult,
+    PlannedWorkoutPushRequest,
+    PlannedWorkoutPushResult,
+)
 from app.services import ApiKeyDep
 from app.services.providers.factory import ProviderFactory
 from app.services.providers.templates.base_planned_workouts import (
@@ -41,6 +45,9 @@ def push_planned_workout(
     - **502**: the provider did not complete the push; `provider_plan_id` is included when the
       plan was created but could not be scheduled (reuse it instead of re-sending)
 
+    Re-sending the same `external_id` REPLACES the workout (content and date) on the provider
+    instead of creating another one.
+
     The API key is a backend credential: this endpoint writes to the athlete's provider account,
     so never expose the key to end-user clients.
     """
@@ -58,5 +65,32 @@ def push_planned_workout(
     except PlannedWorkoutDeliveryError as exc:
         detail: dict[str, str | None] = {"message": exc.detail, "provider_plan_id": exc.provider_plan_id}
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
+    except UnsupportedProviderError as exc:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=exc.detail) from exc
+
+
+@router.delete("/{provider}/users/{user_id}/planned-workouts/{external_id}")
+def delete_planned_workout(
+    provider: Annotated[ProviderName, Path(description="Provider the workout was sent to")],
+    user_id: UUID,
+    external_id: Annotated[str, Path(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9._:-]+$")],
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> PlannedWorkoutDeleteResult:
+    """Remove a workout pushed with `external_id` from the athlete's provider account (calendar and library).
+
+    Idempotent: an `external_id` with nothing on record returns 200 with `deleted: false`.
+
+    - **501**: the provider does not support planned workouts
+    - **401**: the user is not connected to the provider or must re-authorize
+    """
+    strategy = factory.get_provider(provider.value)
+    if not strategy.supports_planned_workouts or strategy.planned_workouts is None:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=f"Provider '{provider.value}' does not support planned workouts",
+        )
+    try:
+        return strategy.planned_workouts.delete(db, user_id, external_id)
     except UnsupportedProviderError as exc:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=exc.detail) from exc

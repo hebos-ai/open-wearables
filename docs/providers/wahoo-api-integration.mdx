@@ -107,7 +107,7 @@ Wahoo limits each user to 10 non-revoked tokens per app; disconnecting a user re
 
 ## Planned workouts
 
-`POST /api/v1/providers/wahoo/users/{user_id}/planned-workouts` translates the canonical workout to Wahoo's [plan.json v1.0.0](https://cloud-api.wahooligan.com/docs/plan-json-format.pdf), creates the plan (`POST /v1/plans`) and, when `scheduled_at` is given, schedules it (`POST /v1/workouts`) so it appears on the athlete's ELEMNT / Wahoo app. See [Planned workouts](/dev-guides/planned-workouts) for the request format and the mapping table.
+`POST /api/v1/providers/wahoo/users/{user_id}/planned-workouts` translates the canonical workout to Wahoo's [plan.json v1.0.0](https://cloud-api.wahooligan.com/docs/plan-json-format.pdf), creates the plan (`POST /v1/plans`) and, when `scheduled_at` is given, schedules it (`POST /v1/workouts`) so it appears on the athlete's ELEMNT / Wahoo app. Repeat groups become native plan.json repeats; re-sending the same `externalId` updates the same plan and workout (`PUT`), and `DELETE …/planned-workouts/{externalId}` removes both. See [Planned workouts](/dev-guides/planned-workouts) for the request format and the mapping table.
 
 <Warning>
 Validate the push against your sandbox app before going live: the plan file is sent as a base64 `data:application/json` URI in a form field, as described in the Wahoo API reference.
