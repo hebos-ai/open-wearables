@@ -12,6 +12,7 @@ from .health_score import HealthScore
 from .invitation import Invitation
 from .menstrual_cycle_details import MenstrualCycleDetails
 from .personal_record import PersonalRecord
+from .planned_workout_push import PlannedWorkoutPush
 from .provider_priority import ProviderPriority
 from .provider_setting import ProviderSetting
 from .refresh_token import RefreshToken
@@ -50,6 +51,7 @@ __all__ = [
     "SleepDetails",
     "WorkoutDetails",
     "PersonalRecord",
+    "PlannedWorkoutPush",
     "DataPointSeries",
     "SeriesTypeDefinition",
     "HealthScore",

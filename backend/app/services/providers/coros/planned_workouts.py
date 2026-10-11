@@ -2,6 +2,7 @@ from typing import Any, NoReturn
 from uuid import UUID
 
 from app.database import DbSession
+from app.models import PlannedWorkoutPush
 from app.schemas.planned_workouts import PlannedWorkout, PlannedWorkoutPushRequest, PlannedWorkoutPushResult
 from app.services.providers.coros.pending import pending_partner_access
 from app.services.providers.templates.base_planned_workouts import BasePlannedWorkoutsTemplate
@@ -26,5 +27,9 @@ class CorosPlannedWorkouts(BasePlannedWorkoutsTemplate):
         payload: Any,
         request: PlannedWorkoutPushRequest,
         external_id: str,
+        existing: PlannedWorkoutPush | None,
     ) -> PlannedWorkoutPushResult:
         raise pending_partner_access("planned workout push")
+
+    def remove(self, db: DbSession, user_id: UUID, existing: PlannedWorkoutPush) -> NoReturn:
+        raise pending_partner_access("planned workout delete")
