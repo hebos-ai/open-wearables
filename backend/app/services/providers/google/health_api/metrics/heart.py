@@ -1,8 +1,11 @@
 """Heart-family metrics.
 
-heart-rate / run-vo2-max support rollUp + list; daily-resting-heart-rate (Daily) and
-heart-rate-variability (Sample) are list only. The HRV sample emits both RMSSD (primary)
-and SDNN (extra) into their own series.
+heart-rate / run-vo2-max support rollUp + list; daily-resting-heart-rate (Daily),
+heart-rate-variability (Sample), daily-heart-rate-variability (Daily) and vo2-max (Sample)
+are list only. The sample HRV type emits RMSSD plus SDNN; the daily one is RMSSD only
+(Google documents its average as an RMSSD). vo2-max is the generic counterpart of
+run-vo2-max, which only Fitbit-style running estimates populate. Field names match
+upstream Open Wearables, which verified them against the live API.
 
 heart-rate and run-vo2-max rollUp values also carry Min/Max alongside the Avg we take;
 capturing those would use the same `extra` mechanism once dedicated SeriesTypes exist.
@@ -41,5 +44,17 @@ HEART_METRICS: tuple[DataTypeMetric, ...] = (
             TimeShape.SAMPLE,
             extra=(SeriesField(SeriesType.heart_rate_variability_sdnn, "standardDeviationMilliseconds"),),
         ),
+    ),
+    DataTypeMetric(
+        "daily-heart-rate-variability",
+        SeriesType.heart_rate_variability_rmssd,
+        value_key="dailyHeartRateVariability",
+        list_spec=ListSpec("averageHeartRateVariabilityMilliseconds", TimeShape.DATE, is_daily_total=True),
+    ),
+    DataTypeMetric(
+        "vo2-max",
+        SeriesType.vo2_max,
+        value_key="vo2Max",
+        list_spec=ListSpec("vo2Max", TimeShape.SAMPLE),
     ),
 )

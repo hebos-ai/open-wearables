@@ -28,6 +28,7 @@ from app.schemas.enums.health_score_category import HealthScoreCategory
 from app.schemas.model_crud.activities import EventRecordDetailCreate
 from app.services.providers.factory import ProviderFactory
 from app.services.providers.google.health_api.metrics import METRICS as GOOGLE_HEALTH_API_METRICS
+from app.services.providers.google.health_api.nutrition import NUTRITION_SERIES as GOOGLE_NUTRITION_SERIES
 
 PROVIDERS_DIR = Path("app/services/providers")
 
@@ -148,7 +149,9 @@ _SDK_DERIVED_SERIES: frozenset[SeriesType] = frozenset(
 _EXTRA_SDK_SERIES: dict[str, frozenset[SeriesType]] = {
     "apple": _SDK_DERIVED_SERIES,
     "samsung": _SDK_DERIVED_SERIES,
-    "google": frozenset(s for m in GOOGLE_HEALTH_API_METRICS for s in m.series_types()) | _SDK_DERIVED_SERIES,
+    "google": frozenset(s for m in GOOGLE_HEALTH_API_METRICS for s in m.series_types())
+    | GOOGLE_NUTRITION_SERIES
+    | _SDK_DERIVED_SERIES,
 }
 
 

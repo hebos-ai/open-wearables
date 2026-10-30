@@ -37,19 +37,19 @@ OURA_WEBHOOK_DATA_TYPES = [
     "daily_spo2",
     "daily_cardiovascular_age",
     "vo2_max",
+    "daily_stress",
+    "daily_resilience",
+    "session",
+    "rest_mode_period",
     #
     # ----- not supported yet -----
     #
     # "sleep_time",
-    # "rest_mode_period",
     # "ring_configuration",
-    # "daily_stress",
     # "daily_cycle_phases",
     # "activation_status",
-    # "daily_resilience",
     # "tag",
     # "enhanced_tag",
-    # "session",
     #
     # ----- possibly not accessible via api - up to verification -----
     #

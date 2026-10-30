@@ -155,7 +155,9 @@ class Settings(BaseSettings):
     whoop_client_id: str | None = None
     whoop_client_secret: SecretStr | None = None
     whoop_redirect_uri: str | None = None  # Deprecated: use API_BASE_URL
-    whoop_default_scope: str = "offline read:cycles read:sleep read:recovery read:workout"
+    whoop_default_scope: str = (
+        "offline read:cycles read:sleep read:recovery read:workout read:body_measurement read:profile"
+    )
 
     # SENSORBIO OAUTH SETTINGS
     sensorbio_client_id: str | None = None
@@ -174,7 +176,7 @@ class Settings(BaseSettings):
     oura_client_id: str | None = None
     oura_client_secret: SecretStr | None = None
     oura_redirect_uri: str | None = None  # Deprecated: use API_BASE_URL
-    oura_default_scope: str = "personal daily activity heartrate workout session spo2 ring_configuration heart_health"
+    oura_default_scope: str = "personal daily heartrate workout session spo2 ring_configuration heart_health"
     oura_webhook_verification_token: SecretStr | None = None
 
     # STRAVA OAUTH SETTINGS

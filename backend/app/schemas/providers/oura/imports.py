@@ -236,3 +236,58 @@ class OuraWebhookNotification(BaseModel):
     user_id: str  # Oura user ID
     object_id: str | None = None  # ID of the affected resource
     event_time: str | None = None  # ISO 8601 — when the event occurred
+
+
+# ---------------------------------------------------------------------------
+# Daily Stress / Daily Resilience / Sessions / Rest Mode
+# ---------------------------------------------------------------------------
+
+
+class OuraDailyStressJSON(BaseModel):
+    """Daily stress from Oura API v2 /usercollection/daily_stress (scope ``daily``)."""
+
+    id: str
+    day: str  # YYYY-MM-DD
+    stress_high: int | None = None  # seconds in the high-stress zone
+    recovery_high: int | None = None  # seconds in the high-recovery zone
+    day_summary: str | None = None  # restored | normal | stressful
+
+
+class OuraResilienceContributorsJSON(BaseModel):
+    sleep_recovery: float | None = None  # 0-100
+    daytime_recovery: float | None = None  # 0-100
+    stress: float | None = None  # 0-100
+
+
+class OuraDailyResilienceJSON(BaseModel):
+    """Daily resilience from Oura API v2 /usercollection/daily_resilience (scope ``daily``)."""
+
+    id: str
+    day: str  # YYYY-MM-DD
+    level: str | None = None  # limited | adequate | solid | strong | exceptional
+    contributors: OuraResilienceContributorsJSON | None = None
+
+
+class OuraSessionJSON(BaseModel):
+    """Guided/unguided session (Moment) from /usercollection/session (scope ``session``)."""
+
+    id: str
+    day: str | None = None
+    start_datetime: str
+    end_datetime: str
+    type: str | None = None  # breathing | meditation | nap | relaxation | rest | body_status
+    mood: str | None = None
+    heart_rate: OuraIntervalData | None = None
+    heart_rate_variability: OuraIntervalData | None = None  # RMSSD
+    motion_count: OuraIntervalData | None = None
+
+
+class OuraRestModePeriodJSON(BaseModel):
+    """Rest mode period from /usercollection/rest_mode_period (scope ``daily``)."""
+
+    id: str
+    start_day: str
+    end_day: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    episodes: list[dict] = []

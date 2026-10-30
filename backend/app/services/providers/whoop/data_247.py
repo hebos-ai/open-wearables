@@ -1,7 +1,7 @@
 """Whoop 247 Data implementation for sleep, recovery, and activity samples."""
 
 from contextlib import suppress
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -27,8 +27,32 @@ from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.providers.whoop.coverage import RECOVERY_SERIES
 from app.services.raw_payload_storage import store_raw_payload
 from app.services.timeseries_service import timeseries_service
-from app.utils.dates import to_rfc3339
+from app.utils.conversion import kilojoules_to_kcal
+from app.utils.dates import parse_iso_datetime, to_rfc3339
 from app.utils.structured_logging import log_structured
+
+_CYCLE_ENDPOINT = "/v2/cycle"
+_CYCLE_PAGE_LIMIT = 25  # Whoop API limit
+# How far back a webhook-triggered refresh looks for the cycle a new sleep/recovery closed.
+_CYCLE_REFRESH_WINDOW = timedelta(days=2)
+
+
+def _zone_delta(zone_offset: str | None) -> timedelta:
+    """Parse a Whoop timezone_offset ("+02:00", "Z") into an offset. Unparseable means UTC."""
+    parsed = parse_iso_datetime(f"1970-01-01T00:00:00{zone_offset}") if zone_offset else None
+    return (parsed.utcoffset() or timedelta()) if parsed else timedelta()
+
+
+def _cycle_day_start(start: datetime, end: datetime, zone_offset: str | None) -> datetime:
+    """Local midnight of the day a cycle covers, as a UTC instant.
+
+    Whoop cycles run from sleep onset to the next sleep onset, so the day they
+    describe is the local date of the cycle midpoint; keying on the start would
+    land a day early whenever the user goes to bed before local midnight.
+    """
+    delta = _zone_delta(zone_offset)
+    local_day = (start + (end - start) / 2 + delta).date()
+    return datetime.combine(local_day, time.min, tzinfo=timezone.utc) - delta
 
 
 class Whoop247Data(Base247DataTemplate):
@@ -464,6 +488,7 @@ class Whoop247Data(Base247DataTemplate):
             "recovery_samples_synced": 0,
             "activity_samples_synced": 0,
             "body_measurement_samples_synced": 0,
+            "cycles_synced": 0,
         }
 
         try:
@@ -487,6 +512,19 @@ class Whoop247Data(Base247DataTemplate):
                 self.logger,
                 "error",
                 f"Failed to sync recovery data: {e}",
+                provider="whoop",
+                task="load_and_save_all",
+                user_id=str(user_id),
+            )
+
+        try:
+            results["cycles_synced"] = self.load_and_save_cycles(db, user_id, start_time, end_time)
+        except Exception as e:
+            db.rollback()
+            log_structured(
+                self.logger,
+                "error",
+                f"Failed to sync cycle data: {e}",
                 provider="whoop",
                 task="load_and_save_all",
                 user_id=str(user_id),
@@ -935,6 +973,194 @@ class Whoop247Data(Base247DataTemplate):
             db.commit()
 
         return total_count
+
+    # -------------------------------------------------------------------------
+    # Cycle Data - Whoop /v2/cycle (daily strain and energy)
+    # -------------------------------------------------------------------------
+
+    def get_cycle_data(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[dict[str, Any]]:
+        """Fetch physiological cycles from Whoop /v2/cycle with pagination.
+
+        On a failed page after the first, returns what it already has (the rest is
+        picked up by the next sync); a failure on the first page propagates.
+        """
+        all_cycles: list[dict[str, Any]] = []
+        next_token = None
+        start_iso = to_rfc3339(start_time)
+        end_iso = to_rfc3339(end_time)
+
+        while True:
+            params: dict[str, Any] = {"start": start_iso, "end": end_iso, "limit": _CYCLE_PAGE_LIMIT}
+            if next_token:
+                params["nextToken"] = next_token
+            try:
+                response = self._make_api_request(db, user_id, _CYCLE_ENDPOINT, params=params)
+                store_raw_payload(
+                    source="api_response",
+                    provider="whoop",
+                    payload=response,
+                    user_id=str(user_id),
+                    trace_id=_CYCLE_ENDPOINT,
+                )
+                records = response.get("records", []) if isinstance(response, dict) else []
+                all_cycles.extend(records)
+                next_token = response.get("next_token") if isinstance(response, dict) else None
+                if not records or not next_token:
+                    break
+            except Exception as e:
+                log_structured(
+                    self.logger,
+                    "error",
+                    f"Error fetching Whoop cycle data: {e}",
+                    provider="whoop",
+                    task="get_cycle_data",
+                    user_id=str(user_id),
+                )
+                if not all_cycles:
+                    raise
+                break
+
+        return all_cycles
+
+    def normalize_cycle(
+        self,
+        raw_cycle: dict[str, Any],
+        user_id: UUID,
+    ) -> tuple[list[TimeSeriesSampleCreate], HealthScoreCreate | None]:
+        """Normalize one Whoop cycle into a daily energy sample and a daily strain score.
+
+        - ``score.kilojoule`` (energy of the whole cycle) -> kcal, series ``energy``,
+          stored as a daily total.
+        - ``score.strain`` (0-21) -> health_score STRAIN, with average/max heart rate
+          and kilojoules as components.
+
+        Both are keyed to local midnight of the day the cycle covers.
+
+        Returns ([], None) for cycles not scored yet and for the one still running
+        (no ``end``): Whoop scores the ongoing cycle too and its strain keeps climbing,
+        and health scores are written with on-conflict-do-nothing, so an early partial
+        value would win over the final one.
+        """
+        if raw_cycle.get("score_state") != "SCORED" or not raw_cycle.get("end"):
+            return [], None
+
+        start = parse_iso_datetime(raw_cycle.get("start"))
+        end = parse_iso_datetime(raw_cycle.get("end"))
+        if not start or not end:
+            return [], None
+
+        score = raw_cycle.get("score") or {}
+        zone_offset = raw_cycle.get("timezone_offset")
+        recorded_at = _cycle_day_start(start, end, zone_offset)
+        cycle_id = raw_cycle.get("id")
+
+        samples: list[TimeSeriesSampleCreate] = []
+        energy_kcal = kilojoules_to_kcal(score.get("kilojoule"))
+        if energy_kcal is not None:
+            samples.append(
+                TimeSeriesSampleCreate(
+                    id=uuid4(),
+                    user_id=user_id,
+                    source=self.provider_name,
+                    external_id=f"whoop-cycle-{cycle_id}-energy" if cycle_id is not None else None,
+                    recorded_at=recorded_at,
+                    zone_offset=zone_offset,
+                    value=energy_kcal.quantize(Decimal("0.01")),
+                    series_type=SeriesType.energy,
+                    is_daily_total=True,
+                )
+            )
+
+        strain_score = None
+        strain = score.get("strain")
+        if strain is not None:
+            components = {
+                k: ScoreComponent(value=score.get(k))
+                for k in ("average_heart_rate", "max_heart_rate", "kilojoule")
+                if score.get(k) is not None
+            }
+            strain_score = HealthScoreCreate(
+                id=uuid4(),
+                user_id=user_id,
+                provider=ProviderName.WHOOP,
+                category=HealthScoreCategory.STRAIN,
+                value=strain,
+                recorded_at=recorded_at,
+                zone_offset=zone_offset,
+                components=components or None,
+            )
+
+        return samples, strain_score
+
+    def load_and_save_cycles(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> int:
+        """Load cycles from the API and save daily energy and strain. Returns cycles saved."""
+        raw_data = self.get_cycle_data(db, user_id, start_time, end_time)
+        samples: list[TimeSeriesSampleCreate] = []
+        health_scores: list[HealthScoreCreate] = []
+        saved = 0
+
+        for item in raw_data:
+            try:
+                cycle_samples, strain_score = self.normalize_cycle(item, user_id)
+            except Exception as e:
+                log_structured(
+                    self.logger,
+                    "warning",
+                    f"Failed to normalize cycle: {e}",
+                    provider="whoop",
+                    task="load_and_save_cycles",
+                    user_id=str(user_id),
+                )
+                continue
+            if cycle_samples or strain_score:
+                saved += 1
+            samples.extend(cycle_samples)
+            if strain_score:
+                health_scores.append(strain_score)
+
+        # One commit for both: the energy batch fires calories.created after commit,
+        # and whoever polls the day then must already find the strain score.
+        if health_scores:
+            health_score_service.bulk_create(db, health_scores)
+        if samples:
+            timeseries_service.bulk_create_samples(db, samples)
+        if samples or health_scores:
+            db.commit()
+        return saved
+
+    def refresh_recent_cycles(self, db: DbSession, user_id: UUID) -> int:
+        """Re-read the last couple of cycles after a sleep/recovery webhook.
+
+        A new sleep closes the previous cycle (sleep onset is the cycle boundary), so
+        this is when its final strain and energy become available. Whoop sends no
+        webhook for cycles themselves.
+        """
+        now = datetime.now(timezone.utc)
+        try:
+            return self.load_and_save_cycles(db, user_id, now - _CYCLE_REFRESH_WINDOW, now)
+        except Exception as e:
+            db.rollback()
+            log_structured(
+                self.logger,
+                "warning",
+                f"Failed to refresh Whoop cycles: {e}",
+                provider="whoop",
+                task="refresh_recent_cycles",
+                user_id=str(user_id),
+            )
+            return 0
 
     # -------------------------------------------------------------------------
     # Activity Samples

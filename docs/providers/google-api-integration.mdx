@@ -30,10 +30,16 @@ The Google Health API is an **aggregation layer**: it surfaces data from *every*
 |-----------|------|
 | Steps, distance, calories, hydration | 24/7 metrics |
 | Heart rate, resting heart rate, HRV (RMSSD + SDNN) | 24/7 metrics |
-| VO₂ max, respiratory rate, SpO₂ | 24/7 metrics |
-| Weight, body fat, core body temperature, blood glucose | 24/7 metrics |
+| VO₂ max (run and generic), respiratory rate, SpO₂ (sample and daily), daily HRV | 24/7 metrics |
+| Weight, height, body fat, core body temperature, blood glucose | 24/7 metrics |
+| Nightly skin temperature (`skin_temperature`) and its deviation from the user's baseline (`skin_temperature_deviation` = nightly − baseline) | 24/7 metrics (`daily-sleep-temperature-derivations`) |
+| Nutrition: energy, macros and micronutrients per logged entry (`dietary_*`, needs `googlehealth.nutrition.readonly`) | `nutrition-log` |
 | Workouts (Exercise sessions) | Sessions |
 | Sleep (with stages) | Sessions |
+
+Lean, bone and water mass are not Google Health API data types; they arrive from Health
+Connect through the mobile SDK. Menstrual data (`menstrual-period`) is write-only in the
+Google Health API (`reproductive_health.writeonly` scope), so it cannot be read here.
 
 ### Data delivery
 
@@ -316,9 +322,11 @@ curl -X DELETE \
 
 <Note>
 `dataTypes` above is an abbreviated example — use the set the app supports for webhooks
-(steps, distance, hydration-log, heart-rate, run-vo2-max, daily-resting-heart-rate,
-heart-rate-variability, weight, body-fat, blood-glucose, daily-respiratory-rate, sleep,
-exercise). Registering a data type the app doesn't handle just means its notifications are ignored.
+(steps, distance, hydration-log, heart-rate, run-vo2-max, vo2-max, daily-resting-heart-rate,
+heart-rate-variability, daily-heart-rate-variability, weight, height, body-fat, blood-glucose,
+daily-respiratory-rate, daily-oxygen-saturation, daily-sleep-temperature-derivations,
+nutrition-log, sleep, exercise). Registering again with an existing subscriber id updates its
+data types (`PATCH … ?updateMask=subscriberConfigs`), so new types start arriving. Registering a data type the app doesn't handle just means its notifications are ignored.
 </Note>
 
 ## Next Steps

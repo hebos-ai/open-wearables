@@ -130,6 +130,21 @@ class TestSuuntoWorkouts:
         assert metrics["energy_burned"] == Decimal("650")
         assert metrics["distance"] == Decimal("10000")
 
+    def test_build_metrics_keeps_speed_in_m_per_s(
+        self,
+        suunto_workouts: SuuntoWorkouts,
+        sample_workout_data: dict,
+    ) -> None:
+        """Suunto sends m/s (avgSpeedInKmH is the km/h copy); speed is stored as m/s, not ×3.6."""
+        workout = SuuntoWorkoutJSON(**{**sample_workout_data, "avgSpeed": 4.36, "maxSpeed": 5.5})
+
+        metrics = suunto_workouts._build_metrics(workout)
+
+        assert metrics["average_speed"] == Decimal("4.36")
+        assert metrics["max_speed"] == Decimal("5.5")
+        # 1000 / 4.36 m/s ≈ 229 s/km (3:49 min/km), the pace a 15.7 km/h run has
+        assert round(1000 / metrics["average_speed"]) == 229
+
     def test_build_metrics_with_missing_heart_rate(
         self,
         suunto_workouts: SuuntoWorkouts,
