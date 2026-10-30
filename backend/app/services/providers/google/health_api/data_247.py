@@ -34,6 +34,7 @@ from app.services.providers.google.health_api.helpers import (
     zone_offset_from,
 )
 from app.services.providers.google.health_api.metrics import METRICS
+from app.services.providers.google.health_api.nutrition import NUTRITION_DATA_TYPE, parse_nutrition_point
 from app.services.providers.google.health_api.sleep import GoogleHealthApiSleep
 from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
@@ -92,6 +93,18 @@ class GoogleHealth247Data(Base247DataTemplate):
             if counts is not None:
                 results[metric.data_type] = counts
 
+        # nutrition-log is a Session type with a nutrient list, outside the metric registry.
+        try:
+            with db.begin_nested():
+                samples = self._nutrition_samples(db, user_id, start_time, end_time)
+                counts = timeseries_service.bulk_create_samples(db, samples) if samples else None
+            succeeded += 1
+            if counts is not None:
+                results[NUTRITION_DATA_TYPE] = counts
+        except Exception as e:
+            self._log_metric_failure(NUTRITION_DATA_TYPE, user_id, e)
+            failures[NUTRITION_DATA_TYPE] = str(e)
+
         try:
             sleep_count = self.sleep.load_and_save(db, user_id, start_time, end_time)
             succeeded += 1
@@ -134,6 +147,13 @@ class GoogleHealth247Data(Base247DataTemplate):
         are owned by their own handlers and are routed there by the webhook handler
         before ever reaching here, so an unrecognised type is a safe no-op.
         """
+        if data_type == NUTRITION_DATA_TYPE:
+            samples = self._nutrition_samples(db, user_id, start_time, end_time)
+            if not samples:
+                return None
+            counts = timeseries_service.bulk_create_samples(db, samples)
+            db.commit()
+            return counts
         metric = next((m for m in METRICS if m.data_type == data_type), None)
         if metric is None:
             return None
@@ -298,7 +318,54 @@ class GoogleHealth247Data(Base247DataTemplate):
                             user_id, recorded_at, value, series_type, spec.is_daily_total, zone_offset, device_model
                         )
                     )
+            # Unlike the readings above, a difference of zero is a measurement: the night sat on
+            # the baseline.
+            for derived in spec.derived or ():
+                left = read_number(value_obj, derived.field, None, derived.scale)
+                right = read_number(value_obj, derived.against, None, derived.scale)
+                if left is None or right is None:
+                    continue
+                samples.append(
+                    self._sample(
+                        user_id,
+                        recorded_at,
+                        left - right,
+                        derived.series_type,
+                        spec.is_daily_total,
+                        zone_offset,
+                        device_model,
+                    )
+                )
         return samples
+
+    def _nutrition_samples(
+        self, db: DbSession, user_id: UUID, start_time: datetime, end_time: datetime
+    ) -> list[TimeSeriesSampleCreate]:
+        """One dietary_* sample per nutrient of every nutrition-log entry starting in the window.
+
+        Always uses the list operation: reconcile would merge entries and lose the per-source
+        device attribution, and the totals are summed per day by consumers anyway.
+        """
+        endpoint = LIST_ENDPOINT.format(data_type=NUTRITION_DATA_TYPE)
+        time_filter = self._time_filter(NUTRITION_DATA_TYPE, TimeShape.INTERVAL, start_time, end_time, True)
+        # A series keeps one row per (source, instant), and the foods of one meal usually share
+        # the start time: add them up. Entries with the same start always come in the same
+        # window, so a re-sync writes the same total (idempotent).
+        totals: dict[tuple[SeriesType, datetime, str | None], tuple[Decimal, str | None]] = {}
+        for point in self._fetch_points(db, user_id, endpoint, time_filter):
+            parsed = parse_nutrition_point(point, start_time, end_time)
+            if parsed is None:
+                continue
+            recorded_at, zone_offset, nutrients = parsed
+            device_model = extract_source(point.get("dataSource"))[1]
+            for series_type, value in nutrients.items():
+                key = (series_type, recorded_at, device_model)
+                previous = totals.get(key, (Decimal(0), zone_offset))[0]
+                totals[key] = (previous + value, zone_offset)
+        return [
+            self._sample(user_id, recorded_at, value, series_type, False, zone_offset, device_model)
+            for (series_type, recorded_at, device_model), (value, zone_offset) in totals.items()
+        ]
 
     @staticmethod
     def _bindings(

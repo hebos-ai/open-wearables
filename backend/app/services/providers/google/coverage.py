@@ -3,11 +3,15 @@ from app.constants.series_types.sdk.workout_statistics import WORKOUT_STATISTIC_
 from app.schemas.enums import SeriesType
 from app.services.providers.apple.coverage import HEALTH_SCORES, SLEEP_FIELDS, WORKOUT_FIELDS
 from app.services.providers.google.health_api.metrics import METRICS
+from app.services.providers.google.health_api.nutrition import NUTRITION_SERIES
 
 # Google data arrives through two paths under one provider identity:
 #   - Health Connect SDK: Android/HC metric types (RMSSD, not SDNN)
-#   - Health API cloud: series from the unified rollUp + list metric registry
-HEALTH_API_SERIES: frozenset[SeriesType] = frozenset(s for m in METRICS for s in m.series_types())
+#   - Health API cloud: series from the unified rollUp + list metric registry, plus the
+#     dietary_* series read from nutrition-log entries
+HEALTH_API_SERIES: frozenset[SeriesType] = frozenset(
+    {*(s for m in METRICS for s in m.series_types()), *NUTRITION_SERIES}
+)
 
 TIMESERIES: frozenset[SeriesType] = frozenset(
     {

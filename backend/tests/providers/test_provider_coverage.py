@@ -28,6 +28,7 @@ from app.schemas.enums.health_score_category import HealthScoreCategory
 from app.schemas.model_crud.activities import EventRecordDetailCreate
 from app.services.providers.factory import ProviderFactory
 from app.services.providers.google.health_api.metrics import METRICS as GOOGLE_HEALTH_API_METRICS
+from app.services.providers.google.health_api.nutrition import NUTRITION_SERIES as GOOGLE_NUTRITION_SERIES
 
 PROVIDERS_DIR = Path("app/services/providers")
 
@@ -141,7 +142,7 @@ _SDK_METRIC_MAP = {
 # SDK providers that also pull cloud series contribute extra timeseries beyond the
 # SDK maps. google is hybrid: Health Connect SDK + Health API daily rollups.
 _EXTRA_SDK_SERIES: dict[str, frozenset[SeriesType]] = {
-    "google": frozenset(s for m in GOOGLE_HEALTH_API_METRICS for s in m.series_types()),
+    "google": frozenset(s for m in GOOGLE_HEALTH_API_METRICS for s in m.series_types()) | GOOGLE_NUTRITION_SERIES,
 }
 
 
