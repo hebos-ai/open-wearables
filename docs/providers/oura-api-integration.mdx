@@ -31,6 +31,11 @@ Oura provides access to sleep, readiness, activity, heart rate, and workout data
 | VO2 max | Yes |
 | Cardiovascular age | Yes |
 | Workouts / Activities | Yes |
+| Daily stress (day summary + minutes in high stress / high recovery) | Yes |
+| Daily resilience (level + contributors) | Yes |
+| Sessions / Moments (meditation, breathing, relaxation; HRV) | Yes |
+| Rest mode periods (finished periods) | Yes |
+| Skin temperature deviation and trend (from readiness, relative to baseline) | Yes |
 
 ### Data delivery
 
@@ -167,7 +172,7 @@ OURA_WEBHOOK_VERIFICATION_TOKEN=your-oura-webhook-verification-token
 
     Open Wearables derives the callback URL from your `API_BASE_URL` as `{API_BASE_URL}/api/v1/providers/oura/webhooks`, registers a subscription for each data type / event type, and Oura verifies each one using your `OURA_WEBHOOK_VERIFICATION_TOKEN`. Subscriptions are **app-level** - they cover all authorized users.
 
-    **Subscribed data types:** `sleep`, `daily_sleep`, `daily_readiness`, `daily_activity`, `daily_spo2`, `daily_cardiovascular_age`, `workout` - each for the `create` and `update` events.
+    **Subscribed data types:** `sleep`, `daily_sleep`, `daily_readiness`, `daily_activity`, `daily_spo2`, `daily_cardiovascular_age`, `vo2_max`, `daily_stress`, `daily_resilience`, `session`, `rest_mode_period`, `workout` - each for the `create` and `update` events.
 
     <Note>
     Oura subscriptions expire after 90 days and are renewed automatically by a scheduled task (monthly). You can also manage them manually via `POST /api/v1/providers/oura/webhooks/subscriptions` (register / re-register with a `callback_url`) and `POST /api/v1/providers/oura/webhooks/subscriptions/renew`.
@@ -223,6 +228,14 @@ OURA_WEBHOOK_VERIFICATION_TOKEN=your-oura-webhook-verification-token
 | **Data API base** | `https://api.ouraring.com/v2/usercollection` |
 | **Webhook callback** | `POST /api/v1/providers/oura/webhooks` |
 
+### How the new daily data is stored
+
+- **Daily stress** → health score `stress` (provider `oura`). Oura gives no 0-100 score, so `value` is empty, `qualifier` is the day summary (`restored`, `normal`, `stressful`) and `components` carries `stress_high_minutes` and `recovery_high_minutes`.
+- **Daily resilience** → health score `resilience`: `qualifier` is the level (`limited` … `exceptional`), `components` the contributors `sleep_recovery`, `daytime_recovery` and `stress` (0-100).
+- **Sessions** → workout records with type `meditation` (breathing, meditation, relaxation, rest and body status) and the session HRV samples as `heart_rate_variability_rmssd`. Naps are skipped because Oura already reports them as sleep.
+- **Rest mode** → event records with category `rest_mode`. Only finished periods are stored.
+- **Temperature**: readiness `temperature_deviation` and `temperature_trend_deviation` are deviations from the user's baseline and are stored as `skin_temperature_deviation` and `skin_temperature_trend_deviation`, never as an absolute temperature.
+
 ## OAuth Scopes Reference
 
 | Scope | Description |
@@ -236,7 +249,7 @@ OURA_WEBHOOK_VERIFICATION_TOKEN=your-oura-webhook-verification-token
 | `session` | Guided and unguided sessions (e.g. moment, breathing) |
 | `spo2` | Blood oxygen (SpO2) and breathing disturbance data |
 | `ring_configuration` | Ring hardware configuration |
-| `stress` | Daily stress data |
+| `stress` | Daily stress data. Not listed in the current OpenAPI scopes (1.43); daily stress and resilience are read with `daily`. Add it to `OURA_DEFAULT_SCOPE` only if your application has it enabled |
 | `heart_health` | Cardiovascular age and VO2 max |
 
 <Note>

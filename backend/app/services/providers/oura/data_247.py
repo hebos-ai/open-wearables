@@ -12,7 +12,7 @@ from app.config import settings
 from app.constants.series_types.oura.sleep_phase import SLEEP_PHASE_MAP
 from app.constants.sleep import SleepStageType
 from app.database import DbSession
-from app.models import EventRecord
+from app.models import EventRecord, HealthScore
 from app.repositories import EventRecordRepository, UserConnectionRepository
 from app.repositories.data_point_series_repository import WriteCounts
 from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType
@@ -30,7 +30,14 @@ from app.schemas.providers.oura import (
     OuraDailySleepJSON,
     OuraSleepJSON,
 )
-from app.schemas.providers.oura.imports import OuraIntervalData, OuraPersonalInfoJSON
+from app.schemas.providers.oura.imports import (
+    OuraDailyResilienceJSON,
+    OuraDailyStressJSON,
+    OuraIntervalData,
+    OuraPersonalInfoJSON,
+    OuraRestModePeriodJSON,
+    OuraSessionJSON,
+)
 from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
 from app.services.providers.api_client import make_authenticated_request
@@ -38,6 +45,8 @@ from app.services.providers.oura.coverage import (
     ACTIVITY_SERIES,
     PERSONAL_INFO_SERIES,
     READINESS_SERIES,
+    SESSION_INTERVAL_SERIES,
+    SESSION_WORKOUT_TYPES,
     SLEEP_INTERVAL_SERIES,
     SLEEP_SCALAR_SERIES,
 )
@@ -1229,6 +1238,279 @@ class Oura247Data(Base247DataTemplate):
         return counts
 
     # -------------------------------------------------------------------------
+    # Daily Stress - /v2/usercollection/daily_stress
+    # Daily Resilience - /v2/usercollection/daily_resilience
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _day_start_utc(day: str | None) -> datetime | None:
+        if not day:
+            return None
+        try:
+            return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    def _get_date_range_collection(
+        self, db: DbSession, user_id: UUID, collection: str, start_time: datetime, end_time: datetime
+    ) -> list[dict[str, Any]]:
+        params = {
+            "start_date": start_time.strftime("%Y-%m-%d"),
+            "end_date": end_time.strftime("%Y-%m-%d"),
+        }
+        return self._paginate(db, user_id, f"/v2/usercollection/{collection}", params)
+
+    def get_daily_stress_data(
+        self, db: DbSession, user_id: UUID, start_time: datetime, end_time: datetime
+    ) -> list[dict[str, Any]]:
+        return self._get_date_range_collection(db, user_id, "daily_stress", start_time, end_time)
+
+    def normalize_daily_stress(self, raw_items: list[dict[str, Any]], user_id: UUID) -> list[HealthScoreCreate]:
+        """Oura daily stress → health_score STRESS.
+
+        Oura gives no 0-100 stress score, only time in the high-stress / high-recovery
+        zones and a day summary. ``value`` stays empty (minutes can exceed the column
+        precision and are not a score); ``qualifier`` is the day summary and the
+        minutes go to ``components``.
+        """
+        scores: list[HealthScoreCreate] = []
+        for item in (OuraDailyStressJSON(**raw) for raw in raw_items):
+            recorded_at = self._day_start_utc(item.day)
+            if recorded_at is None:
+                continue
+            components: dict[str, ScoreComponent] = {}
+            if item.stress_high is not None:
+                components["stress_high_minutes"] = ScoreComponent(value=round(item.stress_high / 60, 1))
+            if item.recovery_high is not None:
+                components["recovery_high_minutes"] = ScoreComponent(value=round(item.recovery_high / 60, 1))
+            if not components and item.day_summary is None:
+                continue
+            scores.append(
+                HealthScoreCreate(
+                    id=uuid4(),
+                    user_id=user_id,
+                    category=HealthScoreCategory.STRESS,
+                    value=None,
+                    qualifier=item.day_summary,
+                    provider=ProviderName.OURA,
+                    recorded_at=recorded_at,
+                    components=components or None,
+                )
+            )
+        return scores
+
+    def get_daily_resilience_data(
+        self, db: DbSession, user_id: UUID, start_time: datetime, end_time: datetime
+    ) -> list[dict[str, Any]]:
+        return self._get_date_range_collection(db, user_id, "daily_resilience", start_time, end_time)
+
+    def normalize_daily_resilience(self, raw_items: list[dict[str, Any]], user_id: UUID) -> list[HealthScoreCreate]:
+        """Oura daily resilience → health_score RESILIENCE (qualifier = level, contributors 0-100)."""
+        scores: list[HealthScoreCreate] = []
+        for item in (OuraDailyResilienceJSON(**raw) for raw in raw_items):
+            recorded_at = self._day_start_utc(item.day)
+            if recorded_at is None or (item.level is None and item.contributors is None):
+                continue
+            components = None
+            if item.contributors:
+                components = {
+                    k: ScoreComponent(value=v) for k, v in item.contributors.model_dump().items() if v is not None
+                }
+            scores.append(
+                HealthScoreCreate(
+                    id=uuid4(),
+                    user_id=user_id,
+                    category=HealthScoreCategory.RESILIENCE,
+                    value=None,
+                    qualifier=item.level,
+                    provider=ProviderName.OURA,
+                    recorded_at=recorded_at,
+                    components=components or None,
+                )
+            )
+        return scores
+
+    def save_health_scores(self, db: DbSession, scores: list[HealthScoreCreate]) -> int:
+        """Save stress/resilience scores, replacing the stored version of the same day.
+
+        Oura re-sends today's document as the day goes on (more minutes of stress, a summary
+        at the end). Health scores are inserted with on-conflict-do-nothing, so without the
+        delete the first, partial version of the day would stay forever.
+        """
+        if not scores:
+            return 0
+        for score in scores:
+            db.query(HealthScore).filter(
+                HealthScore.user_id == score.user_id,
+                HealthScore.provider == score.provider,
+                HealthScore.category == score.category,
+                HealthScore.recorded_at == score.recorded_at,
+            ).delete(synchronize_session=False)
+        health_score_service.bulk_create(db, scores)
+        db.commit()
+        return len(scores)
+
+    # -------------------------------------------------------------------------
+    # Sessions (Moments) - /v2/usercollection/session
+    # -------------------------------------------------------------------------
+
+    def get_session_data(
+        self, db: DbSession, user_id: UUID, start_time: datetime, end_time: datetime
+    ) -> list[dict[str, Any]]:
+        return self._get_date_range_collection(db, user_id, "session", start_time, end_time)
+
+    @staticmethod
+    def _parse_local_datetime(value: str) -> datetime:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    def _interval_samples(
+        self, user_id: UUID, interval_data: OuraIntervalData | None, series_type: SeriesType
+    ) -> list[TimeSeriesSampleCreate]:
+        if not (interval_data and interval_data.timestamp and interval_data.interval and interval_data.items):
+            return []
+        start = self._parse_local_datetime(interval_data.timestamp)
+        utcoff = start.utcoffset()
+        zone_offset = offset_to_iso(int(utcoff.total_seconds())) if utcoff is not None else None
+        return [
+            TimeSeriesSampleCreate(
+                id=uuid4(),
+                user_id=user_id,
+                source=self.provider_name,
+                recorded_at=start + timedelta(seconds=interval_data.interval * i),
+                zone_offset=zone_offset,
+                value=Decimal(str(value)),
+                series_type=series_type,
+            )
+            for i, value in enumerate(interval_data.items)
+            if value is not None
+        ]
+
+    def normalize_sessions(
+        self, raw_items: list[dict[str, Any]], user_id: UUID
+    ) -> list[tuple[EventRecordCreate, EventRecordDetailCreate, list[TimeSeriesSampleCreate]]]:
+        """Oura sessions → workout record (type ``meditation``) + HRV (RMSSD) samples.
+
+        Naps are skipped: Oura already reports them as sleep records. Heart rate
+        is not re-saved from the session because /heartrate already carries it
+        (only min/avg/max go to the workout detail).
+        """
+        bundles: list[tuple[EventRecordCreate, EventRecordDetailCreate, list[TimeSeriesSampleCreate]]] = []
+        for item in (OuraSessionJSON(**raw) for raw in raw_items):
+            workout_type = SESSION_WORKOUT_TYPES.get(item.type or "")
+            if workout_type is None:
+                continue
+            try:
+                start = self._parse_local_datetime(item.start_datetime)
+                end = self._parse_local_datetime(item.end_datetime)
+            except ValueError:
+                continue
+            utcoff = start.utcoffset()
+            record_id = uuid4()
+            duration = max(int((end - start).total_seconds()), 0)
+            hr_values = [Decimal(str(v)) for v in (item.heart_rate.items if item.heart_rate else []) if v is not None]
+            record = EventRecordCreate(
+                id=record_id,
+                category="workout",
+                type=workout_type.value,
+                source_name="Oura",
+                device_model=None,
+                duration_seconds=duration,
+                start_datetime=start,
+                end_datetime=end,
+                zone_offset=offset_to_iso(int(utcoff.total_seconds())) if utcoff is not None else None,
+                external_id=item.id,
+                source=self.provider_name,
+                user_id=user_id,
+            )
+            detail = EventRecordDetailCreate(
+                record_id=record_id,
+                moving_time_seconds=duration,
+                heart_rate_min=min(hr_values) if hr_values else None,
+                heart_rate_max=max(hr_values) if hr_values else None,
+                heart_rate_avg=(sum(hr_values, Decimal(0)) / Decimal(len(hr_values))).quantize(Decimal("0.01"))
+                if hr_values
+                else None,
+            )
+            samples: list[TimeSeriesSampleCreate] = []
+            for field_name, series_type in SESSION_INTERVAL_SERIES.items():
+                samples.extend(self._interval_samples(user_id, getattr(item, field_name), series_type))
+            bundles.append((record, detail, samples))
+        return bundles
+
+    def save_sessions(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        bundles: list[tuple[EventRecordCreate, EventRecordDetailCreate, list[TimeSeriesSampleCreate]]],
+    ) -> int:
+        count = 0
+        for record, detail, samples in bundles:
+            created = event_record_service.create(db, record)
+            event_record_service.create_detail(db, detail.model_copy(update={"record_id": created.id}))
+            if samples:
+                timeseries_service.bulk_create_samples(db, samples)
+                db.commit()
+            count += 1
+        return count
+
+    # -------------------------------------------------------------------------
+    # Rest Mode - /v2/usercollection/rest_mode_period
+    # -------------------------------------------------------------------------
+
+    def get_rest_mode_data(
+        self, db: DbSession, user_id: UUID, start_time: datetime, end_time: datetime
+    ) -> list[dict[str, Any]]:
+        return self._get_date_range_collection(db, user_id, "rest_mode_period", start_time, end_time)
+
+    def normalize_rest_mode_periods(self, raw_items: list[dict[str, Any]], user_id: UUID) -> list[EventRecordCreate]:
+        """Oura rest mode → event_record with category ``rest_mode`` (no detail table).
+
+        Only finished periods are stored: an ongoing period has no end yet and the
+        (start, end) uniqueness of event_record would otherwise leave one row per
+        update. Oura sends an ``update`` webhook when the period ends.
+        """
+        records: list[EventRecordCreate] = []
+        for item in (OuraRestModePeriodJSON(**raw) for raw in raw_items):
+            try:
+                start = (
+                    self._parse_local_datetime(item.start_time)
+                    if item.start_time
+                    else self._day_start_utc(item.start_day)
+                )
+                end = self._parse_local_datetime(item.end_time) if item.end_time else None
+                if end is None and item.end_day:
+                    end_day = self._day_start_utc(item.end_day)
+                    end = end_day + timedelta(days=1) if end_day else None
+            except ValueError:
+                continue
+            if start is None or end is None or end < start:
+                continue
+            utcoff = start.utcoffset()
+            records.append(
+                EventRecordCreate(
+                    id=uuid4(),
+                    category="rest_mode",
+                    type=None,
+                    source_name="Oura",
+                    device_model=None,
+                    duration_seconds=int((end - start).total_seconds()),
+                    start_datetime=start,
+                    end_datetime=end,
+                    zone_offset=offset_to_iso(int(utcoff.total_seconds())) if utcoff is not None else None,
+                    external_id=item.id,
+                    source=self.provider_name,
+                    user_id=user_id,
+                )
+            )
+        return records
+
+    def save_rest_mode_periods(self, db: DbSession, records: list[EventRecordCreate]) -> int:
+        for record in records:
+            event_record_service.create(db, record)
+        return len(records)
+
+    # -------------------------------------------------------------------------
     # Combined Load
     # -------------------------------------------------------------------------
 
@@ -1293,6 +1575,22 @@ class Oura247Data(Base247DataTemplate):
             ),
             "personal_info": lambda: self.save_personal_info(db, user_id, self.get_personal_info(db, user_id)),
             "vo2_max": lambda: self.save_vo2_data(db, user_id, self.get_vo2_data(db, user_id, start_time, end_time)),
+            "daily_stress": lambda: self.save_health_scores(
+                db, self.normalize_daily_stress(self.get_daily_stress_data(db, user_id, start_time, end_time), user_id)
+            ),
+            "daily_resilience": lambda: self.save_health_scores(
+                db,
+                self.normalize_daily_resilience(
+                    self.get_daily_resilience_data(db, user_id, start_time, end_time), user_id
+                ),
+            ),
+            "session": lambda: self.save_sessions(
+                db, user_id, self.normalize_sessions(self.get_session_data(db, user_id, start_time, end_time), user_id)
+            ),
+            "rest_mode": lambda: self.save_rest_mode_periods(
+                db,
+                self.normalize_rest_mode_periods(self.get_rest_mode_data(db, user_id, start_time, end_time), user_id),
+            ),
         }
 
         results: dict[str, int] = {}
