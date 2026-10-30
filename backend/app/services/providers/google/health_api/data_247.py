@@ -348,7 +348,10 @@ class GoogleHealth247Data(Base247DataTemplate):
         """
         endpoint = LIST_ENDPOINT.format(data_type=NUTRITION_DATA_TYPE)
         time_filter = self._time_filter(NUTRITION_DATA_TYPE, TimeShape.INTERVAL, start_time, end_time, True)
-        samples: list[TimeSeriesSampleCreate] = []
+        # A series keeps one row per (source, instant), and the foods of one meal usually share
+        # the start time: add them up. Entries with the same start always come in the same
+        # window, so a re-sync writes the same total (idempotent).
+        totals: dict[tuple[SeriesType, datetime, str | None], tuple[Decimal, str | None]] = {}
         for point in self._fetch_points(db, user_id, endpoint, time_filter):
             parsed = parse_nutrition_point(point, start_time, end_time)
             if parsed is None:
@@ -356,8 +359,13 @@ class GoogleHealth247Data(Base247DataTemplate):
             recorded_at, zone_offset, nutrients = parsed
             device_model = extract_source(point.get("dataSource"))[1]
             for series_type, value in nutrients.items():
-                samples.append(self._sample(user_id, recorded_at, value, series_type, False, zone_offset, device_model))
-        return samples
+                key = (series_type, recorded_at, device_model)
+                previous = totals.get(key, (Decimal(0), zone_offset))[0]
+                totals[key] = (previous + value, zone_offset)
+        return [
+            self._sample(user_id, recorded_at, value, series_type, False, zone_offset, device_model)
+            for (series_type, recorded_at, device_model), (value, zone_offset) in totals.items()
+        ]
 
     @staticmethod
     def _bindings(

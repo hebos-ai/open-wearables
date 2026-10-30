@@ -229,3 +229,34 @@ class TestPersistence:
         assert Decimal(str(stored[get_series_type_id(SeriesType.skin_temperature_deviation)])).quantize(
             Decimal("0.1")
         ) == Decimal("0.3")
+
+
+class TestNutritionSameInstant:
+    def test_entries_logged_at_the_same_time_add_up(self, db: Session) -> None:
+        """Foods of one meal usually share the start time; each series keeps one row per instant,
+        so they must be added up, not overwrite each other. Re-syncing gives the same total."""
+        user = UserFactory()
+        handler = _handler()
+        second = _nutrition_point()
+        second["name"] = "users/me/dataTypes/nutrition-log/dataPoints/def"
+        second["nutritionLog"] = {
+            **second["nutritionLog"],
+            "foodDisplayName": "Pan",
+            "energy": {"kcal": 150},
+            "nutrients": [{"nutrient": "PROTEIN", "quantity": {"grams": 5}}],
+        }
+        del second["nutritionLog"]["totalFat"]
+        for _ in range(2):
+            with patch.object(handler, "_fetch_points", return_value=[_nutrition_point(), second]):
+                handler.sync_data_type(db, user.id, NUTRITION_DATA_TYPE, START, END)
+
+        def stored(series_type: SeriesType) -> list[Decimal]:
+            return [
+                Decimal(str(row.value))
+                for row in db.query(DataPointSeries).all()
+                if row.series_type_definition_id == get_series_type_id(series_type)
+            ]
+
+        assert stored(SeriesType.dietary_energy_consumed) == [Decimal("800")]
+        assert stored(SeriesType.dietary_protein) == [Decimal("36")]
+        assert stored(SeriesType.dietary_fat_total) == [Decimal("22")]
