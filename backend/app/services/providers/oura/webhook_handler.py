@@ -60,6 +60,10 @@ SUPPORTED_DATA_TYPES = [
     "daily_spo2",
     "daily_cardiovascular_age",
     "vo2_max",
+    "daily_stress",
+    "daily_resilience",
+    "session",
+    "rest_mode_period",
 ]
 
 # Oura webhook data_type → REST collection name (only entries that differ)
@@ -373,6 +377,16 @@ class OuraWebhookHandler(BaseWebhookHandler):
                 )
             case "vo2_max":
                 return self.data_247.save_vo2_data(db, user_id, docs, log_ctx)
+            case "daily_stress":
+                return self.data_247.save_health_scores(db, self.data_247.normalize_daily_stress(docs, user_id))
+            case "daily_resilience":
+                return self.data_247.save_health_scores(db, self.data_247.normalize_daily_resilience(docs, user_id))
+            case "session":
+                return self.data_247.save_sessions(db, user_id, self.data_247.normalize_sessions(docs, user_id))
+            case "rest_mode_period":
+                return self.data_247.save_rest_mode_periods(
+                    db, self.data_247.normalize_rest_mode_periods(docs, user_id)
+                )
             case _:
                 log_structured(
                     logger,
