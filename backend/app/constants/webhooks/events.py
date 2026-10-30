@@ -7,6 +7,7 @@ Each series type is mapped to:
 Both events are emitted for every ingestion batch.  Series types not listed here are silently skipped.
 """
 
+from app.schemas.enums import SeriesType
 from app.schemas.webhooks.event_types import WebhookEventType
 
 # ---------------------------------------------------------------------------
@@ -19,6 +20,7 @@ SERIES_TYPE_TO_GROUP_EVENT: dict[str, str] = {
     "heart_rate_recovery_one_minute": WebhookEventType.HEART_RATE_CREATED,
     "walking_heart_rate_average": WebhookEventType.HEART_RATE_CREATED,
     "atrial_fibrillation_burden": WebhookEventType.HEART_RATE_CREATED,
+    "max_heart_rate": WebhookEventType.HEART_RATE_CREATED,
     "heart_rate_variability_sdnn": WebhookEventType.HEART_RATE_VARIABILITY_CREATED,
     "heart_rate_variability_rmssd": WebhookEventType.HEART_RATE_VARIABILITY_CREATED,
     "garmin_body_battery": WebhookEventType.RECOVERY_SCORE_CREATED,
@@ -45,6 +47,8 @@ SERIES_TYPE_TO_GROUP_EVENT: dict[str, str] = {
     "body_fat_mass": WebhookEventType.BODY_COMPOSITION_CREATED,
     "skeletal_muscle_mass": WebhookEventType.BODY_COMPOSITION_CREATED,
     "waist_circumference": WebhookEventType.BODY_COMPOSITION_CREATED,
+    "bone_mass": WebhookEventType.BODY_COMPOSITION_CREATED,
+    "body_water_mass": WebhookEventType.BODY_COMPOSITION_CREATED,
     # Body Temperature
     "body_temperature": WebhookEventType.BODY_TEMPERATURE_CREATED,
     "skin_temperature": WebhookEventType.BODY_TEMPERATURE_CREATED,
@@ -110,6 +114,12 @@ SERIES_TYPE_TO_GROUP_EVENT: dict[str, str] = {
     "inhaler_usage": WebhookEventType.ENVIRONMENTAL_CREATED,
     "weather_temperature": WebhookEventType.ENVIRONMENTAL_CREATED,
     "weather_humidity": WebhookEventType.ENVIRONMENTAL_CREATED,
+    # Nutrition: every dietary_* series type goes to the nutrition group
+    **{
+        series_type.value: WebhookEventType.NUTRITION_CREATED
+        for series_type in SeriesType
+        if series_type.value.startswith("dietary_")
+    },
 }
 
 # Backwards-compat alias (was the only mapping before granular events were added)
@@ -124,6 +134,7 @@ SERIES_TYPE_TO_GRANULAR_EVENT: dict[str, str] = {
     "heart_rate_recovery_one_minute": WebhookEventType.SERIES_HEART_RATE_RECOVERY_ONE_MINUTE,
     "walking_heart_rate_average": WebhookEventType.SERIES_WALKING_HEART_RATE_AVERAGE,
     "atrial_fibrillation_burden": WebhookEventType.SERIES_ATRIAL_FIBRILLATION_BURDEN,
+    "max_heart_rate": WebhookEventType.SERIES_MAX_HEART_RATE,
     "heart_rate_variability_sdnn": WebhookEventType.SERIES_HEART_RATE_VARIABILITY_SDNN,
     "heart_rate_variability_rmssd": WebhookEventType.SERIES_HEART_RATE_VARIABILITY_RMSSD,
     "garmin_body_battery": WebhookEventType.SERIES_GARMIN_BODY_BATTERY,
@@ -148,6 +159,8 @@ SERIES_TYPE_TO_GRANULAR_EVENT: dict[str, str] = {
     "body_fat_mass": WebhookEventType.SERIES_BODY_FAT_MASS,
     "skeletal_muscle_mass": WebhookEventType.SERIES_SKELETAL_MUSCLE_MASS,
     "waist_circumference": WebhookEventType.SERIES_WAIST_CIRCUMFERENCE,
+    "bone_mass": WebhookEventType.SERIES_BONE_MASS,
+    "body_water_mass": WebhookEventType.SERIES_BODY_WATER_MASS,
     "body_temperature": WebhookEventType.SERIES_BODY_TEMPERATURE,
     "skin_temperature": WebhookEventType.SERIES_SKIN_TEMPERATURE,
     "skin_temperature_deviation": WebhookEventType.SERIES_SKIN_TEMPERATURE_DEVIATION,
@@ -206,4 +219,12 @@ SERIES_TYPE_TO_GRANULAR_EVENT: dict[str, str] = {
     "inhaler_usage": WebhookEventType.SERIES_INHALER_USAGE,
     "weather_temperature": WebhookEventType.SERIES_WEATHER_TEMPERATURE,
     "weather_humidity": WebhookEventType.SERIES_WEATHER_HUMIDITY,
+    "dietary_energy_consumed": WebhookEventType.SERIES_DIETARY_ENERGY_CONSUMED,
+    "dietary_carbohydrates": WebhookEventType.SERIES_DIETARY_CARBOHYDRATES,
+    "dietary_protein": WebhookEventType.SERIES_DIETARY_PROTEIN,
+    "dietary_fat_total": WebhookEventType.SERIES_DIETARY_FAT_TOTAL,
+    "dietary_fiber": WebhookEventType.SERIES_DIETARY_FIBER,
+    "dietary_sugar": WebhookEventType.SERIES_DIETARY_SUGAR,
+    "dietary_sodium": WebhookEventType.SERIES_DIETARY_SODIUM,
+    "dietary_caffeine": WebhookEventType.SERIES_DIETARY_CAFFEINE,
 }

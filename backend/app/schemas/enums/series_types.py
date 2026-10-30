@@ -24,6 +24,7 @@ class SeriesType(str, Enum):
     heart_rate_recovery_one_minute = "heart_rate_recovery_one_minute"
     walking_heart_rate_average = "walking_heart_rate_average"
     heart_rate_variability_rmssd = "heart_rate_variability_rmssd"
+    max_heart_rate = "max_heart_rate"  # User's maximum heart rate (profile / physical information)
 
     # =========================================================================
     # BIOMETRICS - Blood & Respiratory (IDs 20-39)
@@ -61,6 +62,8 @@ class SeriesType(str, Enum):
     waist_circumference = "waist_circumference"
     body_fat_mass = "body_fat_mass"
     skeletal_muscle_mass = "skeletal_muscle_mass"
+    bone_mass = "bone_mass"
+    body_water_mass = "body_water_mass"
 
     # =========================================================================
     # BIOMETRICS - Fitness Metrics (IDs 60-79)
@@ -168,6 +171,52 @@ class SeriesType(str, Enum):
     nike_fuel = "nike_fuel"
     hydration = "hydration"
 
+    # =========================================================================
+    # NUTRITION - Dietary intake (IDs 260-301, same IDs as upstream)
+    # =========================================================================
+    dietary_energy_consumed = "dietary_energy_consumed"
+    dietary_carbohydrates = "dietary_carbohydrates"
+    dietary_fiber = "dietary_fiber"
+    dietary_sugar = "dietary_sugar"
+    dietary_fat_total = "dietary_fat_total"
+    dietary_fat_saturated = "dietary_fat_saturated"
+    dietary_fat_monounsaturated = "dietary_fat_monounsaturated"
+    dietary_fat_polyunsaturated = "dietary_fat_polyunsaturated"
+    dietary_cholesterol = "dietary_cholesterol"
+    dietary_protein = "dietary_protein"
+    dietary_sodium = "dietary_sodium"
+    dietary_potassium = "dietary_potassium"
+    dietary_calcium = "dietary_calcium"
+    dietary_iron = "dietary_iron"
+    dietary_magnesium = "dietary_magnesium"
+    dietary_phosphorus = "dietary_phosphorus"
+    dietary_zinc = "dietary_zinc"
+    dietary_copper = "dietary_copper"
+    dietary_manganese = "dietary_manganese"
+    dietary_selenium = "dietary_selenium"
+    dietary_chromium = "dietary_chromium"
+    dietary_molybdenum = "dietary_molybdenum"
+    dietary_iodine = "dietary_iodine"
+    dietary_chloride = "dietary_chloride"
+    dietary_vitamin_a = "dietary_vitamin_a"
+    dietary_vitamin_b6 = "dietary_vitamin_b6"
+    dietary_vitamin_b12 = "dietary_vitamin_b12"
+    dietary_vitamin_c = "dietary_vitamin_c"
+    dietary_vitamin_d = "dietary_vitamin_d"
+    dietary_vitamin_e = "dietary_vitamin_e"
+    dietary_vitamin_k = "dietary_vitamin_k"
+    dietary_thiamin = "dietary_thiamin"
+    dietary_riboflavin = "dietary_riboflavin"
+    dietary_niacin = "dietary_niacin"
+    dietary_folate = "dietary_folate"
+    dietary_pantothenic_acid = "dietary_pantothenic_acid"
+    dietary_biotin = "dietary_biotin"
+    dietary_caffeine = "dietary_caffeine"
+    dietary_fat_trans = "dietary_fat_trans"
+    dietary_energy_from_fat = "dietary_energy_from_fat"
+    dietary_fat_unsaturated = "dietary_fat_unsaturated"
+    dietary_folic_acid = "dietary_folic_acid"
+
 
 # =============================================================================
 # DATABASE ID DEFINITIONS
@@ -185,6 +234,7 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (4, SeriesType.heart_rate_recovery_one_minute, "bpm"),
     (5, SeriesType.walking_heart_rate_average, "bpm"),
     (7, SeriesType.heart_rate_variability_rmssd, "ms"),
+    (8, SeriesType.max_heart_rate, "bpm"),
     # -------------------------------------------------------------------------
     # BIOMETRICS - Blood & Respiratory (IDs 20-39)
     # -------------------------------------------------------------------------
@@ -215,6 +265,8 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (49, SeriesType.skeletal_muscle_mass, "kg"),
     (50, SeriesType.skin_temperature_deviation, "celsius"),
     (51, SeriesType.skin_temperature_trend_deviation, "celsius"),
+    (52, SeriesType.bone_mass, "kg"),
+    (53, SeriesType.body_water_mass, "kg"),
     # -------------------------------------------------------------------------
     # BIOMETRICS - Fitness Metrics (IDs 60-79)
     # -------------------------------------------------------------------------
@@ -308,6 +360,51 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (505, SeriesType.number_of_alcoholic_beverages, "count"),
     (506, SeriesType.nike_fuel, "count"),
     (507, SeriesType.hydration, "mL"),
+    # -------------------------------------------------------------------------
+    # NUTRITION - Dietary intake (IDs 260-301, same IDs as upstream)
+    # -------------------------------------------------------------------------
+    (260, SeriesType.dietary_energy_consumed, "kcal"),
+    (261, SeriesType.dietary_carbohydrates, "g"),
+    (262, SeriesType.dietary_fiber, "g"),
+    (263, SeriesType.dietary_sugar, "g"),
+    (264, SeriesType.dietary_fat_total, "g"),
+    (265, SeriesType.dietary_fat_saturated, "g"),
+    (266, SeriesType.dietary_fat_monounsaturated, "g"),
+    (267, SeriesType.dietary_fat_polyunsaturated, "g"),
+    (268, SeriesType.dietary_cholesterol, "mg"),
+    (269, SeriesType.dietary_protein, "g"),
+    (270, SeriesType.dietary_sodium, "mg"),
+    (271, SeriesType.dietary_potassium, "mg"),
+    (272, SeriesType.dietary_calcium, "mg"),
+    (273, SeriesType.dietary_iron, "mg"),
+    (274, SeriesType.dietary_magnesium, "mg"),
+    (275, SeriesType.dietary_phosphorus, "mg"),
+    (276, SeriesType.dietary_zinc, "mg"),
+    (277, SeriesType.dietary_copper, "mg"),
+    (278, SeriesType.dietary_manganese, "mg"),
+    (279, SeriesType.dietary_selenium, "mcg"),
+    (280, SeriesType.dietary_chromium, "mcg"),
+    (281, SeriesType.dietary_molybdenum, "mcg"),
+    (282, SeriesType.dietary_iodine, "mcg"),
+    (283, SeriesType.dietary_chloride, "mg"),
+    (284, SeriesType.dietary_vitamin_a, "mcg"),
+    (285, SeriesType.dietary_vitamin_b6, "mg"),
+    (286, SeriesType.dietary_vitamin_b12, "mcg"),
+    (287, SeriesType.dietary_vitamin_c, "mg"),
+    (288, SeriesType.dietary_vitamin_d, "mcg"),
+    (289, SeriesType.dietary_vitamin_e, "mg"),
+    (290, SeriesType.dietary_vitamin_k, "mcg"),
+    (291, SeriesType.dietary_thiamin, "mg"),
+    (292, SeriesType.dietary_riboflavin, "mg"),
+    (293, SeriesType.dietary_niacin, "mg"),
+    (294, SeriesType.dietary_folate, "mcg"),
+    (295, SeriesType.dietary_pantothenic_acid, "mg"),
+    (296, SeriesType.dietary_biotin, "mcg"),
+    (297, SeriesType.dietary_caffeine, "mg"),
+    (298, SeriesType.dietary_fat_trans, "g"),
+    (299, SeriesType.dietary_energy_from_fat, "kcal"),
+    (300, SeriesType.dietary_fat_unsaturated, "g"),
+    (301, SeriesType.dietary_folic_acid, "mcg"),
 ]
 
 
@@ -357,6 +454,7 @@ _CATEGORY_RANGES: list[tuple[range, str]] = [
     (range(180, 200), "Activity - Generic"),
     (range(200, 220), "Environmental"),
     (range(220, 240), "Provider-Specific"),
+    (range(260, 302), "Nutrition"),
     (range(500, 600), "Other"),
 ]
 
