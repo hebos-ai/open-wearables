@@ -1,3 +1,4 @@
+import hashlib
 import json
 import time
 from datetime import datetime, timedelta
@@ -87,6 +88,20 @@ _ENERGY_IN_KCAL: dict[str, Decimal] = {
     "kj": Decimal("0.239006"),
 }
 _VOLUME_IN_ML: dict[str, Decimal] = {"ml": Decimal("1"), "l": Decimal("1000")}
+
+
+def _intake_offset(record_id: str | None) -> timedelta:
+    """Sub-millisecond shift, fixed per record, for food and water samples.
+
+    A series keeps one row per (source, instant) and the foods of one meal usually share the
+    meal's time, so without it each food overwrites the previous one. The shift depends only on
+    the record id: re-sending a record updates its own row.
+    """
+    if not record_id:
+        return timedelta(0)
+    digest = hashlib.sha256(record_id.encode()).digest()
+    return timedelta(microseconds=int.from_bytes(digest[:4], "big") % 1000)
+
 
 _SDK_ITEM_MODELS = (("records", MetricRecord), ("sleep", SleepRecord), ("workouts", Workout))
 
@@ -419,8 +434,10 @@ class ImportService:
                     else SeriesType.skin_temperature
                 )
 
+            recorded_at = rjson.startDate
             if series_type == SeriesType.hydration or series_type.value.startswith("dietary_"):
                 value = self._convert_intake_unit(series_type, value, rjson.unit)
+                recorded_at = recorded_at + _intake_offset(rjson.id)
 
             # Health Connect reports blood glucose in mmol/L; the series unit is mg/dL.
             if series_type == SeriesType.blood_glucose and (rjson.unit or "").lower().startswith("mmol"):
@@ -437,7 +454,7 @@ class ImportService:
                 device_model=device_model,
                 software_version=software_version,
                 provider=provider,
-                recorded_at=rjson.startDate,
+                recorded_at=recorded_at,
                 zone_offset=rjson.zoneOffset,
                 value=value,
                 series_type=series_type,

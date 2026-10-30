@@ -395,3 +395,18 @@ class TestBodyAndNutritionImport:
         (energy,) = _series(db, user.id, SeriesType.dietary_energy_consumed)
         assert float(energy.value) == pytest.approx(501.913, abs=0.01)  # kJ → kcal
         assert [float(s.value) for s in _series(db, user.id, SeriesType.dietary_fat_total)] == [18.0]
+
+    def test_foods_logged_at_the_same_time_add_up(self, db: Session, import_service: ImportService) -> None:
+        """Each food is its own record, often at the meal's time. A series keeps one row per
+        (source, instant), so two foods must not overwrite each other, also across syncs."""
+        user = UserFactory()
+        protein = "HKQuantityTypeIdentifierDietaryProtein"
+        rice = _record("R1", protein, 10, "2026-10-01T13:00:00Z", unit="g")
+        chicken = _record("R2", protein, 25, "2026-10-01T13:00:00Z", unit="g")
+        import_service.load_data(db, _payload("apple", [rice, chicken]), str(user.id))
+        import_service.load_data(db, _payload("apple", [chicken]), str(user.id))  # re-sent later
+        stored = _series(db, user.id, SeriesType.dietary_protein)
+        assert sum(float(s.value) for s in stored) == 35.0
+        assert all(
+            s.recorded_at.replace(microsecond=0) == datetime(2026, 10, 1, 13, tzinfo=timezone.utc) for s in stored
+        )
