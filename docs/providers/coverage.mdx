@@ -107,7 +107,7 @@ This guide gives an overview of data type support across the integrated wearable
 | `active_time` | minutes | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | `average_met` | met | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | `basal_energy` | kcal | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `energy` | kcal | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `energy` | kcal | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ |
 | `exercise_time` | minutes | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | `flights_climbed` | count | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | `physical_effort` | score | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -363,7 +363,7 @@ Key differences and limitations to be aware of when working with each provider:
   - Sleep data fully implemented with all stages and efficiency
   - Recovery data fully implemented: recovery score, resting heart rate, HRV (RMSSD), SpO2, skin temperature
   - Body measurements (height, weight) synced from user profile
-  - Strain scores available but not yet implemented
+  - Daily cycles (`/v2/cycle`): day strain (0-21) as a `strain` health score, with average/max heart rate and kilojoules as components, and the cycle energy (kJ converted to kcal) as a daily `energy` total. Both are anchored to the local day of the cycle midpoint; cycles still in progress are skipped and picked up once closed
 </Accordion>
 
 <Accordion title="Ultrahuman">
