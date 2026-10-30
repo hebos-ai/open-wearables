@@ -2,6 +2,7 @@
 
 from .health_api import (
     DataTypeMetric,
+    DerivedSeriesField,
     ListSpec,
     RollupSpec,
     SeriesField,
@@ -22,6 +23,7 @@ __all__ = [
     "GoogleWebhookNotification",
     "ListSpec",
     "RollupSpec",
+    "DerivedSeriesField",
     "SeriesField",
     "TimeShape",
 ]
