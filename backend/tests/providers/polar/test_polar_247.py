@@ -1,6 +1,6 @@
 """Tests for Polar247Data normalization."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -353,6 +353,35 @@ class TestPolar247NightlyRechargeNormalization:
 
     def test_empty_input(self, data_247: Polar247Data) -> None:
         assert data_247.normalize_nightly_recharge([], uuid4()) == []
+
+    def test_resting_heart_rate_component(self, data_247: Polar247Data, sample_recharge: dict) -> None:
+        """heart_rate_avg also goes under the canonical key the recovery summary reads."""
+        score = data_247.normalize_nightly_recharge([sample_recharge], uuid4())[0]
+
+        assert score.components["resting_heart_rate"].value == 52
+        assert score.components["heart_rate_avg"].value == 52
+
+    def test_hrv_sample_at_sleep_midpoint(self, data_247: Polar247Data, sample_recharge: dict) -> None:
+        start = datetime(2024, 1, 14, 22, 0, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 15, 6, 0, tzinfo=timezone.utc)
+        user_id = uuid4()
+        samples = data_247.nightly_recharge_hrv_samples([sample_recharge], user_id, {date(2024, 1, 15): (start, end)})
+
+        assert len(samples) == 1
+        sample = samples[0]
+        assert sample.series_type == SeriesType.heart_rate_variability_rmssd
+        assert sample.value == 48
+        assert sample.recorded_at == datetime(2024, 1, 15, 2, 0, tzinfo=timezone.utc)
+        assert start <= sample.recorded_at < end
+        assert sample.user_id == user_id
+
+    def test_hrv_sample_skipped_without_sleep_window(self, data_247: Polar247Data, sample_recharge: dict) -> None:
+        assert data_247.nightly_recharge_hrv_samples([sample_recharge], uuid4(), {}) == []
+
+    def test_hrv_sample_skipped_without_hrv(self, data_247: Polar247Data, sample_recharge: dict) -> None:
+        sample_recharge.pop("heart_rate_variability_avg")
+        window = (datetime(2024, 1, 14, 22, 0, tzinfo=timezone.utc), datetime(2024, 1, 15, 6, 0, tzinfo=timezone.utc))
+        assert data_247.nightly_recharge_hrv_samples([sample_recharge], uuid4(), {date(2024, 1, 15): window}) == []
 
 
 # ---------------------------------------------------------------------------

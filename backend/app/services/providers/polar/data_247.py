@@ -19,6 +19,7 @@ from app.constants.series_types.polar import (
     SLEEP_INERTIA_LABELS,
 )
 from app.database import DbSession
+from app.models import DataSource, EventRecord
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType
 from app.schemas.model_crud.activities import (
@@ -515,6 +516,10 @@ class Polar247Data(Base247DataTemplate):
                     value=parsed.ans_charge_status,
                     qualifier=ANS_CHARGE_STATUS_LABELS.get(parsed.ans_charge_status),
                 )
+            # Canonical key read by the recovery summary (as Whoop does), so Polar's nightly
+            # average HR surfaces as resting_heart_rate_bpm in /summaries/recovery.
+            if parsed.heart_rate_avg is not None:
+                components["resting_heart_rate"] = ScoreComponent(value=parsed.heart_rate_avg)
             scores.append(
                 HealthScoreCreate(
                     id=uuid4(),
@@ -528,6 +533,83 @@ class Polar247Data(Base247DataTemplate):
                 )
             )
         return scores
+
+    def nightly_recharge_hrv_samples(
+        self,
+        raw_items: list[dict[str, Any]],
+        user_id: UUID,
+        sleep_windows: dict[date, tuple[datetime, datetime]],
+    ) -> list[TimeSeriesSampleCreate]:
+        """Nightly Recharge HRV (RMSSD, ms) as a heart_rate_variability_rmssd sample.
+
+        Polar only gives the nightly average (plus 5-min samples keyed by *local* HH:MM with
+        no offset). The sample is placed at the midpoint of that night's Polar sleep session,
+        so the sleep summary (which averages RMSSD inside the sleep window) picks it up as
+        avg_hrv_rmssd_ms. Nights without a known sleep window are skipped (retried next sync).
+        """
+        samples: list[TimeSeriesSampleCreate] = []
+        for raw in raw_items:
+            if (parsed := self._parse(raw, NightlyRechargeJSON, user_id, "nightly_recharge")) is None:
+                continue
+            if parsed.heart_rate_variability_avg is None or not parsed.date:
+                continue
+            window = sleep_windows.get(date.fromisoformat(parsed.date))
+            if window is None:
+                continue
+            start, end = window
+            samples.append(
+                TimeSeriesSampleCreate(
+                    id=uuid4(),
+                    user_id=user_id,
+                    provider=ProviderName.POLAR,
+                    source=ProviderName.POLAR,
+                    recorded_at=start + (end - start) / 2,
+                    value=parsed.heart_rate_variability_avg,
+                    series_type=SeriesType.heart_rate_variability_rmssd,
+                )
+            )
+        return samples
+
+    def _polar_sleep_windows(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> dict[date, tuple[datetime, datetime]]:
+        """Longest Polar sleep session per night, keyed by its wake-up date (end, UTC)."""
+        rows = (
+            db.query(EventRecord.start_datetime, EventRecord.end_datetime)
+            .join(DataSource, EventRecord.data_source_id == DataSource.id)
+            .filter(
+                DataSource.user_id == user_id,
+                DataSource.provider == ProviderName.POLAR,
+                EventRecord.category == "sleep",
+                EventRecord.end_datetime >= start_time - timedelta(days=1),
+                EventRecord.start_datetime < end_time + timedelta(days=1),
+            )
+            .all()
+        )
+        windows: dict[date, tuple[datetime, datetime]] = {}
+        for start, end in rows:
+            night = end.astimezone(timezone.utc).date() if end.tzinfo else end.date()
+            best = windows.get(night)
+            if best is None or (end - start) > (best[1] - best[0]):
+                windows[night] = (start, end)
+        return windows
+
+    def _save_nightly_recharge(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> int:
+        raw_items = self.get_nightly_recharge_data(db, user_id, start_time, end_time)
+        count = self._save_scores(db, self.normalize_nightly_recharge(raw_items, user_id))
+        windows = self._polar_sleep_windows(db, user_id, start_time, end_time)
+        self._save_timeseries(db, self.nightly_recharge_hrv_samples(raw_items, user_id, windows))
+        return count
 
     # -------------------------------------------------------------------------
     # SleepWise — Alertness: GET /v3/users/sleepwise/alertness
@@ -976,12 +1058,8 @@ class Polar247Data(Base247DataTemplate):
             "cardio_load": lambda: self._save_scores(
                 db, self.normalize_cardio_load(self.get_cardio_load_data(db, user_id, start_time, end_time), user_id)
             ),
-            "nightly_recharge": lambda: self._save_scores(
-                db,
-                self.normalize_nightly_recharge(
-                    self.get_nightly_recharge_data(db, user_id, start_time, end_time), user_id
-                ),
-            ),
+            # After "sleep": the HRV sample is anchored to that night's sleep window.
+            "nightly_recharge": lambda: self._save_nightly_recharge(db, user_id, start_time, end_time),
             "alertness": lambda: self._save_scores(
                 db, self.normalize_alertness(self.get_alertness_data(db, user_id, start_time, end_time), user_id)
             ),
