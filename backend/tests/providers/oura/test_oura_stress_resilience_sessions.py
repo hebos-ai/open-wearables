@@ -171,6 +171,17 @@ class TestPersistence:
         assert by_cat[HealthScoreCategory.RESILIENCE].qualifier == "solid"
         assert by_cat[HealthScoreCategory.RESILIENCE].components["sleep_recovery"]["value"] == 72.5
 
+    def test_todays_stress_is_updated_during_the_day(self, db: Session, data_247: Oura247Data) -> None:
+        """Oura re-sends daily_stress as the day goes on: the last version must win, not the first."""
+        user = UserFactory()
+        morning = {**STRESS, "stress_high": 600, "day_summary": None}
+        data_247.save_health_scores(db, data_247.normalize_daily_stress([morning], user.id))
+        data_247.save_health_scores(db, data_247.normalize_daily_stress([STRESS], user.id))
+
+        (row,) = db.query(HealthScore).filter(HealthScore.user_id == user.id).all()
+        assert row.qualifier == "stressful"
+        assert row.components["stress_high_minutes"]["value"] == 90.0
+
     def test_save_session_and_rest_mode(self, db: Session, data_247: Oura247Data) -> None:
         user = UserFactory()
         assert data_247.save_sessions(db, user.id, data_247.normalize_sessions([SESSION], user.id)) == 1

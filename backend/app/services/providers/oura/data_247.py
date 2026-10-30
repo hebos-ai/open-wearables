@@ -12,7 +12,7 @@ from app.config import settings
 from app.constants.series_types.oura.sleep_phase import SLEEP_PHASE_MAP
 from app.constants.sleep import SleepStageType
 from app.database import DbSession
-from app.models import EventRecord
+from app.models import EventRecord, HealthScore
 from app.repositories import EventRecordRepository, UserConnectionRepository
 from app.repositories.data_point_series_repository import WriteCounts
 from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType
@@ -1331,8 +1331,21 @@ class Oura247Data(Base247DataTemplate):
         return scores
 
     def save_health_scores(self, db: DbSession, scores: list[HealthScoreCreate]) -> int:
+        """Save stress/resilience scores, replacing the stored version of the same day.
+
+        Oura re-sends today's document as the day goes on (more minutes of stress, a summary
+        at the end). Health scores are inserted with on-conflict-do-nothing, so without the
+        delete the first, partial version of the day would stay forever.
+        """
         if not scores:
             return 0
+        for score in scores:
+            db.query(HealthScore).filter(
+                HealthScore.user_id == score.user_id,
+                HealthScore.provider == score.provider,
+                HealthScore.category == score.category,
+                HealthScore.recorded_at == score.recorded_at,
+            ).delete(synchronize_session=False)
         health_score_service.bulk_create(db, scores)
         db.commit()
         return len(scores)
