@@ -1,6 +1,7 @@
+import hashlib
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from logging import Logger, getLogger
 from typing import Iterable, TypedDict
@@ -10,15 +11,24 @@ import sentry_sdk
 from pydantic import ValidationError
 
 from app.constants.series_types.sdk import (
+    SDKMetricType,
     WorkoutStatisticType,
     get_detail_field_from_workout_statistic_type,
     get_series_type_from_metric_type,
     get_series_type_from_workout_statistic_type,
 )
+from app.constants.series_types.sdk.reproductive_types import (
+    MenstrualFlow,
+    flow_from_record,
+    is_reproductive_type,
+    local_days,
+    parse_zone_offset,
+)
 from app.constants.workout_types import get_unified_apple_workout_type_sdk
 from app.database import DbSession
+from app.models import DataPointSeries, DataSource
 from app.repositories.user_connection_repository import UserConnectionRepository
-from app.schemas.enums import SeriesType, daily_total_flag
+from app.schemas.enums import SeriesType, daily_total_flag, get_series_type_id, get_series_type_unit
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -41,6 +51,7 @@ from app.schemas.providers.mobile_sdk.sync_request import (
 )
 from app.schemas.responses.upload import UploadDataResponse
 from app.services.event_record_service import event_record_service
+from app.services.sdk_menstrual_cycle_service import sdk_menstrual_cycle_service
 from app.services.timeseries_service import timeseries_service
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
@@ -51,6 +62,46 @@ from .sleep_service import handle_sleep_data
 # Health Connect's own mg/dL converter uses exactly 18.0, so values written to HC
 # in mg/dL round-trip with a ~0.1% offset under this factor.
 MMOL_L_TO_MG_DL = Decimal("18.0182")
+
+# Skin temperature readings below this magnitude are deviations from the user's baseline (Health
+# Connect deltas, apps that write the deviation); above it they are absolute readings in °C.
+SKIN_TEMPERATURE_DEVIATION_LIMIT_C = Decimal("5")
+# Wrist temperature: baseline = mean of the previous nights (at least MIN nights in WINDOW days).
+WRIST_BASELINE_WINDOW_DAYS = 28
+WRIST_BASELINE_MIN_NIGHTS = 3
+_WRIST_TEMPERATURE_TYPES = frozenset(
+    {SDKMetricType.APPLE_SLEEPING_WRIST_TEMPERATURE.value, SDKMetricType.ANDROID_SKIN_TEMPERATURE.value}
+)
+
+# Unit factors to the series unit for nutrition and hydration (SDK units as on a nutrition label).
+_MASS_IN_GRAMS: dict[str, Decimal] = {
+    "g": Decimal("1"),
+    "mg": Decimal("0.001"),
+    "mcg": Decimal("0.000001"),
+    "µg": Decimal("0.000001"),
+    "ug": Decimal("0.000001"),
+    "kg": Decimal("1000"),
+}
+_ENERGY_IN_KCAL: dict[str, Decimal] = {
+    "kcal": Decimal("1"),
+    "cal": Decimal("1"),  # HealthKit "Cal" is the food calorie (kcal)
+    "kj": Decimal("0.239006"),
+}
+_VOLUME_IN_ML: dict[str, Decimal] = {"ml": Decimal("1"), "l": Decimal("1000")}
+
+
+def _intake_offset(record_id: str | None) -> timedelta:
+    """Sub-millisecond shift, fixed per record, for food and water samples.
+
+    A series keeps one row per (source, instant) and the foods of one meal usually share the
+    meal's time, so without it each food overwrites the previous one. The shift depends only on
+    the record id: re-sending a record updates its own row.
+    """
+    if not record_id:
+        return timedelta(0)
+    digest = hashlib.sha256(record_id.encode()).digest()
+    return timedelta(microseconds=int.from_bytes(digest[:4], "big") % 1000)
+
 
 _SDK_ITEM_MODELS = (("records", MetricRecord), ("sleep", SleepRecord), ("workouts", Workout))
 
@@ -211,6 +262,147 @@ class ImportService:
             case _:
                 return value
 
+    @staticmethod
+    def _convert_intake_unit(series_type: SeriesType, value: Decimal, unit: str | None) -> Decimal:
+        """Bring nutrition and hydration values to the series unit (g/mg/mcg, kcal, mL)."""
+        if not unit:
+            return value
+        src = unit.strip().lower()
+        target = get_series_type_unit(series_type).lower()
+        for table in (_MASS_IN_GRAMS, _ENERGY_IN_KCAL, _VOLUME_IN_ML):
+            if src in table and target in table:
+                return value * table[src] / table[target]
+        return value
+
+    def _build_flow_samples(self, rjson: MetricRecord, user_uuid: UUID, provider: str) -> list[TimeSeriesSampleCreate]:
+        """One ``menstrual_flow`` sample per local day covered by an SDK menstrual record."""
+        flow = flow_from_record(rjson.type or "", rjson.value)
+        if flow is None:
+            return []
+        device_model, software_version, original_source_name = extract_device_info(rjson.source)
+        tz = parse_zone_offset(rjson.zoneOffset)
+        samples = []
+        for day in local_days(rjson.startDate, rjson.endDate, rjson.zoneOffset):
+            samples.append(
+                TimeSeriesSampleCreate(
+                    id=uuid4(),
+                    external_id=f"{rjson.id}:{day.isoformat()}" if rjson.id else None,
+                    user_id=user_uuid,
+                    source=original_source_name,
+                    device_model=device_model,
+                    software_version=software_version,
+                    provider=provider,
+                    recorded_at=datetime.combine(day, datetime.min.time(), tzinfo=tz),
+                    zone_offset=rjson.zoneOffset,
+                    value=Decimal(int(flow)),
+                    series_type=SeriesType.menstrual_flow,
+                    is_daily_total=daily_total_flag(SeriesType.menstrual_flow, is_daily=True),
+                )
+            )
+        return samples
+
+    @staticmethod
+    def _keep_flow_amounts(
+        db_session: DbSession,
+        samples: list[TimeSeriesSampleCreate],
+    ) -> list[TimeSeriesSampleCreate]:
+        """Drop "bleeding, amount not given" days that would overwrite a known amount.
+
+        Health Connect writes a period record (no amount) over the same days as the per-day flow
+        records, and both land on the same series row (one per day). Without this, whichever comes
+        last wins, so a re-sent period record would wipe out "heavy" or "light".
+        """
+        unspecified = Decimal(int(MenstrualFlow.UNSPECIFIED))
+        amounts = {Decimal(int(f)) for f in (MenstrualFlow.LIGHT, MenstrualFlow.MEDIUM, MenstrualFlow.HEAVY)}
+        flow = [s for s in samples if s.series_type == SeriesType.menstrual_flow]
+
+        # Days that already have an amount: in this batch or stored for this user and provider.
+        with_amount = {s.recorded_at for s in flow if Decimal(str(s.value)) in amounts}
+        candidates = [s for s in flow if Decimal(str(s.value)) == unspecified]
+        if candidates:
+            rows = (
+                db_session.query(DataPointSeries.recorded_at)
+                .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+                .filter(
+                    DataSource.user_id == candidates[0].user_id,
+                    DataSource.provider == candidates[0].provider,
+                    DataPointSeries.series_type_definition_id == get_series_type_id(SeriesType.menstrual_flow),
+                    DataPointSeries.recorded_at.in_({s.recorded_at for s in candidates}),
+                    DataPointSeries.value.in_(amounts),
+                )
+                .all()
+            )
+            with_amount.update(recorded_at for (recorded_at,) in rows)
+
+        return [
+            s
+            for s in samples
+            if not (
+                s.series_type == SeriesType.menstrual_flow
+                and Decimal(str(s.value)) == unspecified
+                and s.recorded_at in with_amount
+            )
+        ]
+
+    def _derive_wrist_temperature_deviation(
+        self,
+        db_session: DbSession,
+        samples: list[TimeSeriesSampleCreate],
+    ) -> list[TimeSeriesSampleCreate]:
+        """Deviation of each absolute wrist-temperature reading from the user's previous nights.
+
+        Apple stores the overnight wrist temperature in °C and the Health app shows it as a
+        deviation from the user's baseline; only the deviation is comparable across people. The
+        baseline is the mean of one value per earlier night (at least WRIST_BASELINE_MIN_NIGHTS in
+        the last WRIST_BASELINE_WINDOW_DAYS). Without enough history no deviation is written.
+        """
+        wrist = [s for s in samples if s.series_type == SeriesType.skin_temperature]
+        if not wrist:
+            return []
+        user_id = wrist[0].user_id
+        provider = wrist[0].provider
+        since = min(s.recorded_at for s in wrist) - timedelta(days=WRIST_BASELINE_WINDOW_DAYS + 1)
+        until = max(s.recorded_at for s in wrist)
+        rows = (
+            db_session.query(DataPointSeries.recorded_at, DataPointSeries.value)
+            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            .filter(
+                DataSource.user_id == user_id,
+                DataSource.provider == provider,
+                DataPointSeries.series_type_definition_id == get_series_type_id(SeriesType.skin_temperature),
+                DataPointSeries.recorded_at >= since,
+                DataPointSeries.recorded_at <= until,
+            )
+            .all()
+        )
+        history = [(recorded_at, Decimal(str(value))) for recorded_at, value in rows]
+        # The batch itself also counts as history for later nights in the same upload.
+        history += [(s.recorded_at, Decimal(str(s.value))) for s in wrist]
+
+        derived: list[TimeSeriesSampleCreate] = []
+        for sample in wrist:
+            window_start = sample.recorded_at - timedelta(days=WRIST_BASELINE_WINDOW_DAYS)
+            nights: dict[object, list[Decimal]] = {}
+            for recorded_at, value in history:
+                # Earlier nights only: at least 12 h before this reading.
+                if window_start <= recorded_at <= sample.recorded_at - timedelta(hours=12):
+                    nights.setdefault(recorded_at.date(), []).append(value)
+            if len(nights) < WRIST_BASELINE_MIN_NIGHTS:
+                continue
+            per_night = [sum(v, Decimal(0)) / len(v) for v in nights.values()]
+            baseline = sum(per_night, Decimal(0)) / len(per_night)
+            derived.append(
+                sample.model_copy(
+                    update={
+                        "id": uuid4(),
+                        "external_id": f"{sample.external_id}:deviation" if sample.external_id else None,
+                        "series_type": SeriesType.skin_temperature_deviation,
+                        "value": (Decimal(str(sample.value)) - baseline).quantize(Decimal("0.001")),
+                    }
+                )
+            )
+        return derived
+
     def _build_statistic_bundles(
         self,
         request: SDKSyncRequest,
@@ -221,14 +413,31 @@ class ImportService:
         provider = request.provider
 
         for rjson in request.data.records:
-            value = Decimal(str(rjson.value))
-
             record_type = rjson.type or ""
+            if is_reproductive_type(record_type):
+                time_series_samples.extend(self._build_flow_samples(rjson, user_uuid, provider))
+                continue
+
+            value = Decimal(str(rjson.value))
             series_type = get_series_type_from_metric_type(record_type)
 
             if not series_type:
                 continue
             value = self._normalize_unit(series_type, value, provider)
+
+            # Skin / wrist temperature: small values are deviations from baseline, large values
+            # are absolute readings. Never stored as body (core) temperature.
+            if record_type in _WRIST_TEMPERATURE_TYPES:
+                series_type = (
+                    SeriesType.skin_temperature_deviation
+                    if abs(value) < SKIN_TEMPERATURE_DEVIATION_LIMIT_C
+                    else SeriesType.skin_temperature
+                )
+
+            recorded_at = rjson.startDate
+            if series_type == SeriesType.hydration or series_type.value.startswith("dietary_"):
+                value = self._convert_intake_unit(series_type, value, rjson.unit)
+                recorded_at = recorded_at + _intake_offset(rjson.id)
 
             # Health Connect reports blood glucose in mmol/L; the series unit is mg/dL.
             if series_type == SeriesType.blood_glucose and (rjson.unit or "").lower().startswith("mmol"):
@@ -245,7 +454,7 @@ class ImportService:
                 device_model=device_model,
                 software_version=software_version,
                 provider=provider,
-                recorded_at=rjson.startDate,
+                recorded_at=recorded_at,
                 zone_offset=rjson.zoneOffset,
                 value=value,
                 series_type=series_type,
@@ -388,13 +597,27 @@ class ImportService:
 
         # Process time series samples (records)
         samples = self._build_statistic_bundles(request, user_id)
+        has_menstrual_flow = any(sample.series_type == SeriesType.menstrual_flow for sample in samples)
+        if has_menstrual_flow:
+            samples = self._keep_flow_amounts(db_session, samples)
         if samples:
             self.timeseries_service.bulk_create_samples(db_session, samples)
             records_saved += len(samples)
             types.update(sample.series_type.value for sample in samples)
 
+            deviations = self._derive_wrist_temperature_deviation(db_session, samples)
+            if deviations:
+                self.timeseries_service.bulk_create_samples(db_session, deviations)
+                records_saved += len(deviations)
+                types.add(SeriesType.skin_temperature_deviation.value)
+
         # Commit all workout and timeseries changes in one transaction
         db_session.commit()
+
+        # Menstrual flow → cycles (event_record + menstrual_cycle_details, menstrual_cycle.created)
+        if has_menstrual_flow:
+            sdk_menstrual_cycle_service.rebuild(db_session, UUID(user_id), request.provider)
+            db_session.commit()
 
         # Process sleep (count sleep segments from input)
         if request.data.sleep:

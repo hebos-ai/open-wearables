@@ -100,3 +100,4 @@ class MenstrualCycleRecord(BaseModel):
     has_specified_cycle_length: bool | None = None
     has_specified_period_length: bool | None = None
     pregnancy_snapshot: list[dict] | None = None
+    daily_flow: list[dict] | None = None

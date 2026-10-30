@@ -1,5 +1,11 @@
 from app.services.providers.base_strategy import BaseProviderStrategy, ProviderCapabilities, ProviderCoverage
-from app.services.providers.samsung.coverage import HEALTH_SCORES, SLEEP_FIELDS, TIMESERIES, WORKOUT_FIELDS
+from app.services.providers.samsung.coverage import (
+    HEALTH_SCORES,
+    MENSTRUAL_CYCLE_FIELDS,
+    SLEEP_FIELDS,
+    TIMESERIES,
+    WORKOUT_FIELDS,
+)
 from app.services.providers.samsung.workouts import SamsungWorkouts
 
 
@@ -37,5 +43,6 @@ class SamsungStrategy(BaseProviderStrategy):
             timeseries=TIMESERIES,
             workout_fields=WORKOUT_FIELDS,
             sleep_fields=SLEEP_FIELDS,
+            menstrual_cycle_fields=MENSTRUAL_CYCLE_FIELDS,
             health_scores=HEALTH_SCORES,
         )

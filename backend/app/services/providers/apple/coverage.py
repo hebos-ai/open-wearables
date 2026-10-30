@@ -8,6 +8,11 @@ TIMESERIES: frozenset[SeriesType] = frozenset(
     {
         *APPLE_METRIC_TYPE_TO_SERIES_TYPE.values(),
         *WORKOUT_STATISTIC_TYPE_TO_SERIES_TYPE.values(),
+        # Not a 1:1 metric mapping: menstrual records become daily flow, and the overnight
+        # wrist/skin temperature also yields a deviation series (ImportService).
+        SeriesType.menstrual_flow,
+        SeriesType.skin_temperature,
+        SeriesType.skin_temperature_deviation,
     }
 )
 
@@ -46,3 +51,17 @@ SLEEP_FIELDS: frozenset[str] = frozenset(
 )
 
 HEALTH_SCORES: frozenset[HealthScoreCategory] = frozenset()
+
+# Menstrual cycles derived from the daily flow (app/services/sdk_menstrual_cycle_service.py)
+MENSTRUAL_CYCLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "day_in_cycle",
+        "current_phase_type",
+        "predicted_cycle_length",
+        "is_predicted_cycle",
+        "cycle_length",
+        "last_updated_at",
+        "period_length",
+        "daily_flow",
+    }
+)

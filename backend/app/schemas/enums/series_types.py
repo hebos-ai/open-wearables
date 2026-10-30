@@ -170,6 +170,9 @@ class SeriesType(str, Enum):
     number_of_alcoholic_beverages = "number_of_alcoholic_beverages"
     nike_fuel = "nike_fuel"
     hydration = "hydration"
+    # Daily menstrual flow code (0 none, 1 spotting, 2 light, 3 medium, 4 heavy, 5 bleeding of
+    # unspecified amount). Raw input for the menstrual cycles derived from SDK data.
+    menstrual_flow = "menstrual_flow"
 
     # =========================================================================
     # NUTRITION - Dietary intake (IDs 260-301, same IDs as upstream)
@@ -360,6 +363,7 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (505, SeriesType.number_of_alcoholic_beverages, "count"),
     (506, SeriesType.nike_fuel, "count"),
     (507, SeriesType.hydration, "mL"),
+    (508, SeriesType.menstrual_flow, "category"),
     # -------------------------------------------------------------------------
     # NUTRITION - Dietary intake (IDs 260-301, same IDs as upstream)
     # -------------------------------------------------------------------------

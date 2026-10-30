@@ -1,5 +1,11 @@
 from app.services.providers.base_strategy import BaseProviderStrategy, ProviderCapabilities, ProviderCoverage
-from app.services.providers.google.coverage import HEALTH_SCORES, SLEEP_FIELDS, TIMESERIES, WORKOUT_FIELDS
+from app.services.providers.google.coverage import (
+    HEALTH_SCORES,
+    MENSTRUAL_CYCLE_FIELDS,
+    SLEEP_FIELDS,
+    TIMESERIES,
+    WORKOUT_FIELDS,
+)
 from app.services.providers.google.health_api.data_247 import GoogleHealth247Data
 from app.services.providers.google.health_api.oauth import GoogleOAuth
 from app.services.providers.google.health_api.webhook_handler import GoogleWebhookHandler
@@ -64,5 +70,6 @@ class GoogleStrategy(BaseProviderStrategy):
             timeseries=TIMESERIES,
             workout_fields=WORKOUT_FIELDS,
             sleep_fields=SLEEP_FIELDS,
+            menstrual_cycle_fields=MENSTRUAL_CYCLE_FIELDS,
             health_scores=HEALTH_SCORES,
         )

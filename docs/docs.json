@@ -66,6 +66,7 @@
             "group": "Sync SDK",
             "pages": [
               "sdk/index",
+              "sdk/hebos-tipos-salud",
               {
                 "group": "iOS (Swift)",
                 "pages": [
