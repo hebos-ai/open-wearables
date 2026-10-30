@@ -10,9 +10,20 @@ ACTIVITY_SERIES: dict[str, SeriesType] = {
     "active_time_minutes": SeriesType.active_time,
 }
 
+# Physical information (GET /v3/users/physical-info, webhook PHYSICAL_INFORMATION): field → SeriesType.
+# The user's profile values (Polar Flow settings, or measured by the watch for VO2max/HR).
+PHYSICAL_INFO_SERIES: dict[str, SeriesType] = {
+    "weight": SeriesType.weight,  # kg
+    "height": SeriesType.height,  # cm
+    "vo2_max": SeriesType.vo2_max,  # ml/kg/min
+    "maximum_heart_rate": SeriesType.max_heart_rate,  # bpm
+    "resting_heart_rate": SeriesType.resting_heart_rate,  # bpm
+}
+
 TIMESERIES: frozenset[SeriesType] = frozenset(
     {
         *ACTIVITY_SERIES.values(),  # /v3/users/activities
+        *PHYSICAL_INFO_SERIES.values(),  # /v3/users/physical-info
         SeriesType.heart_rate,  # /v3/users/sleep + /v3/users/continuous-heart-rate + /v3/users/wrist-ecg
         SeriesType.heart_rate_variability_rmssd,  # /v3/users/spo2 + /v3/users/wrist-ecg
         SeriesType.oxygen_saturation,  # /v3/users/spo2

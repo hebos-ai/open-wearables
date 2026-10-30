@@ -55,7 +55,7 @@ from app.schemas.providers.polar.sleepwise import (
 from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
 from app.services.providers.api_client import make_authenticated_request
-from app.services.providers.polar.coverage import ACTIVITY_SERIES
+from app.services.providers.polar.coverage import ACTIVITY_SERIES, PHYSICAL_INFO_SERIES
 from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.raw_payload_storage import store_raw_payload
@@ -928,6 +928,58 @@ class Polar247Data(Base247DataTemplate):
     # Persistence helpers
     # -------------------------------------------------------------------------
 
+    # -------------------------------------------------------------------------
+    # Physical information - GET /v3/users/physical-info (webhook PHYSICAL_INFORMATION)
+    # -------------------------------------------------------------------------
+
+    def get_physical_info(self, db: DbSession, user_id: UUID) -> dict[str, Any] | None:
+        response = self._make_api_request(db, user_id, "/v3/users/physical-info")
+        return response if isinstance(response, dict) else None
+
+    def normalize_physical_info(self, raw: dict[str, Any] | None, user_id: UUID) -> list[TimeSeriesSampleCreate]:
+        """One sample per profile value (weight, height, VO2max, max and resting HR).
+
+        Polar returns the current profile, stamped with ``modified`` (or ``created``). That instant
+        is the sample time, so re-reading an unchanged profile writes nothing new. The legacy
+        transactional endpoint used kebab-case keys (``maximum-heart-rate``); both are accepted.
+        """
+        if not raw:
+            return []
+        stamp = raw.get("modified") or raw.get("created")
+        try:
+            recorded_at = datetime.fromisoformat(str(stamp).replace("Z", "+00:00")) if stamp else None
+        except ValueError:
+            recorded_at = None
+        if recorded_at is None:
+            return []
+        if recorded_at.tzinfo is None:
+            recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+
+        samples: list[TimeSeriesSampleCreate] = []
+        for field, series_type in PHYSICAL_INFO_SERIES.items():
+            value = raw.get(field, raw.get(field.replace("_", "-")))
+            if value is None or isinstance(value, bool):
+                continue
+            try:
+                number = Decimal(str(value))
+            except (ArithmeticError, ValueError):
+                continue
+            if number <= 0:
+                continue
+            samples.append(
+                TimeSeriesSampleCreate(
+                    id=uuid4(),
+                    external_id=f"physical-info:{field}:{recorded_at.isoformat()}",
+                    user_id=user_id,
+                    provider=ProviderName.POLAR,
+                    source=ProviderName.POLAR,
+                    recorded_at=recorded_at,
+                    value=number,
+                    series_type=series_type,
+                )
+            )
+        return samples
+
     def _save_timeseries(self, db: DbSession, samples: list[TimeSeriesSampleCreate]) -> int:
         counts: int = 0
         if samples:
@@ -980,6 +1032,9 @@ class Polar247Data(Base247DataTemplate):
 
             case PolarWebhookEventType.SLEEP_WISE_CIRCADIAN_BEDTIME:
                 return {"circadian_bedtime": self._save_scores(db, self.normalize_circadian_bedtime([raw], user_id))}
+
+            case PolarWebhookEventType.PHYSICAL_INFORMATION:
+                return {"physical_info": self._save_timeseries(db, self.normalize_physical_info(raw, user_id))}
 
             case _:
                 log_structured(
@@ -1086,6 +1141,9 @@ class Polar247Data(Base247DataTemplate):
             ),
             "wrist_ecg": lambda: self._save_timeseries(
                 db, self.normalize_wrist_ecg(self.get_wrist_ecg_data(db, user_id, start_time, end_time), user_id)
+            ),
+            "physical_info": lambda: self._save_timeseries(
+                db, self.normalize_physical_info(self.get_physical_info(db, user_id), user_id)
             ),
         }
 
