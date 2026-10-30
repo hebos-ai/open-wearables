@@ -274,6 +274,32 @@ class TestMenstrualImport:
         assert detail.daily_flow[0]["flow"] == "heavy"  # the heavier record of the day wins
         assert [d["flow"] for d in detail.daily_flow[1:]] == ["unspecified"] * 3
 
+    def test_period_record_never_hides_the_flow_amount(self, db: Session, import_service: ImportService) -> None:
+        """Health Connect writes a period record over the days that also carry flow records. Whatever
+        the order (same batch, or the period re-sent in a later sync), a day keeps its amount."""
+        user = UserFactory()
+        start = datetime.fromisoformat("2026-10-01T00:00:00+02:00")
+        period = {
+            **_record("P2", "MENSTRUATION_PERIOD", 1, start.isoformat(), (start + timedelta(days=3)).isoformat()),
+            "source": HC_SOURCE,
+        }
+        flow = {**_record("F2", "MENSTRUATION_FLOW", 3, start.isoformat()), "source": HC_SOURCE}
+        # Flow first, period last in the same batch
+        import_service.load_data(db, _payload("samsung", [flow, period]), str(user.id))
+        assert [int(s.value) for s in _series(db, user.id, SeriesType.menstrual_flow)] == [4, 5, 5]
+
+        # The period comes again in a later sync: day 1 stays heavy
+        import_service.load_data(db, _payload("samsung", [period]), str(user.id))
+        assert [int(s.value) for s in _series(db, user.id, SeriesType.menstrual_flow)] == [4, 5, 5]
+        ((_, detail),) = _cycles(db, user.id)
+        assert [d["flow"] for d in detail.daily_flow] == ["heavy", "unspecified", "unspecified"]
+
+    def test_flow_amount_can_still_be_corrected(self, db: Session, import_service: ImportService) -> None:
+        user = UserFactory()
+        import_service.load_data(db, _payload("apple", [_apple_flow_day("C1", "2026-10-01", 4)]), str(user.id))
+        import_service.load_data(db, _payload("apple", [_apple_flow_day("C1", "2026-10-01", 2)]), str(user.id))
+        assert [int(s.value) for s in _series(db, user.id, SeriesType.menstrual_flow)] == [2]
+
     def test_menstrual_webhook_carries_daily_flow(self) -> None:
         sent: list[dict[str, Any]] = []
         with patch.object(outgoing_events, "_dispatch", side_effect=lambda _t, payload, **_k: sent.append(payload)):

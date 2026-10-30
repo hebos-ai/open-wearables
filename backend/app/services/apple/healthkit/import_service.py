@@ -17,6 +17,7 @@ from app.constants.series_types.sdk import (
     get_series_type_from_workout_statistic_type,
 )
 from app.constants.series_types.sdk.reproductive_types import (
+    MenstrualFlow,
     flow_from_record,
     is_reproductive_type,
     local_days,
@@ -285,6 +286,49 @@ class ImportService:
             )
         return samples
 
+    @staticmethod
+    def _keep_flow_amounts(
+        db_session: DbSession,
+        samples: list[TimeSeriesSampleCreate],
+    ) -> list[TimeSeriesSampleCreate]:
+        """Drop "bleeding, amount not given" days that would overwrite a known amount.
+
+        Health Connect writes a period record (no amount) over the same days as the per-day flow
+        records, and both land on the same series row (one per day). Without this, whichever comes
+        last wins, so a re-sent period record would wipe out "heavy" or "light".
+        """
+        unspecified = Decimal(int(MenstrualFlow.UNSPECIFIED))
+        amounts = {Decimal(int(f)) for f in (MenstrualFlow.LIGHT, MenstrualFlow.MEDIUM, MenstrualFlow.HEAVY)}
+        flow = [s for s in samples if s.series_type == SeriesType.menstrual_flow]
+
+        # Days that already have an amount: in this batch or stored for this user and provider.
+        with_amount = {s.recorded_at for s in flow if Decimal(str(s.value)) in amounts}
+        candidates = [s for s in flow if Decimal(str(s.value)) == unspecified]
+        if candidates:
+            rows = (
+                db_session.query(DataPointSeries.recorded_at)
+                .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+                .filter(
+                    DataSource.user_id == candidates[0].user_id,
+                    DataSource.provider == candidates[0].provider,
+                    DataPointSeries.series_type_definition_id == get_series_type_id(SeriesType.menstrual_flow),
+                    DataPointSeries.recorded_at.in_({s.recorded_at for s in candidates}),
+                    DataPointSeries.value.in_(amounts),
+                )
+                .all()
+            )
+            with_amount.update(recorded_at for (recorded_at,) in rows)
+
+        return [
+            s
+            for s in samples
+            if not (
+                s.series_type == SeriesType.menstrual_flow
+                and Decimal(str(s.value)) == unspecified
+                and s.recorded_at in with_amount
+            )
+        ]
+
     def _derive_wrist_temperature_deviation(
         self,
         db_session: DbSession,
@@ -536,6 +580,9 @@ class ImportService:
 
         # Process time series samples (records)
         samples = self._build_statistic_bundles(request, user_id)
+        has_menstrual_flow = any(sample.series_type == SeriesType.menstrual_flow for sample in samples)
+        if has_menstrual_flow:
+            samples = self._keep_flow_amounts(db_session, samples)
         if samples:
             self.timeseries_service.bulk_create_samples(db_session, samples)
             records_saved += len(samples)
@@ -551,7 +598,7 @@ class ImportService:
         db_session.commit()
 
         # Menstrual flow → cycles (event_record + menstrual_cycle_details, menstrual_cycle.created)
-        if any(sample.series_type == SeriesType.menstrual_flow for sample in samples):
+        if has_menstrual_flow:
             sdk_menstrual_cycle_service.rebuild(db_session, UUID(user_id), request.provider)
             db_session.commit()
 
