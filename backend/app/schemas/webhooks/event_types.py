@@ -61,6 +61,7 @@ class WebhookEventType(StrEnum):
     ACTIVITY_CREATED_TIMESERIES = "activity_timeseries.created"
     WORKOUT_METRICS_CREATED = "workout_metrics.created"
     ENVIRONMENTAL_CREATED = "environmental.created"
+    NUTRITION_CREATED = "nutrition.created"
 
     # -------------------------------------------------------------------------
     # TimeSeries — GRANULAR events (one per SeriesType slug)
@@ -73,6 +74,7 @@ class WebhookEventType(StrEnum):
     SERIES_RESTING_HEART_RATE = "series.resting_heart_rate.created"
     SERIES_HEART_RATE_RECOVERY_ONE_MINUTE = "series.heart_rate_recovery_one_minute.created"
     SERIES_WALKING_HEART_RATE_AVERAGE = "series.walking_heart_rate_average.created"
+    SERIES_MAX_HEART_RATE = "series.max_heart_rate.created"
     SERIES_ATRIAL_FIBRILLATION_BURDEN = "series.atrial_fibrillation_burden.created"
 
     # HRV
@@ -112,6 +114,8 @@ class WebhookEventType(StrEnum):
     SERIES_BODY_FAT_MASS = "series.body_fat_mass.created"
     SERIES_SKELETAL_MUSCLE_MASS = "series.skeletal_muscle_mass.created"
     SERIES_WAIST_CIRCUMFERENCE = "series.waist_circumference.created"
+    SERIES_BONE_MASS = "series.bone_mass.created"
+    SERIES_BODY_WATER_MASS = "series.body_water_mass.created"
 
     # Body temperature
     SERIES_BODY_TEMPERATURE = "series.body_temperature.created"
@@ -147,6 +151,16 @@ class WebhookEventType(StrEnum):
     SERIES_NUMBER_OF_ALCOHOLIC_BEVERAGES = "series.number_of_alcoholic_beverages.created"
     SERIES_NIKE_FUEL = "series.nike_fuel.created"
     SERIES_HYDRATION = "series.hydration.created"
+
+    # Nutrition (main macros get a granular event; the rest of dietary_* only the group one)
+    SERIES_DIETARY_ENERGY_CONSUMED = "series.dietary_energy_consumed.created"
+    SERIES_DIETARY_CARBOHYDRATES = "series.dietary_carbohydrates.created"
+    SERIES_DIETARY_PROTEIN = "series.dietary_protein.created"
+    SERIES_DIETARY_FAT_TOTAL = "series.dietary_fat_total.created"
+    SERIES_DIETARY_FIBER = "series.dietary_fiber.created"
+    SERIES_DIETARY_SUGAR = "series.dietary_sugar.created"
+    SERIES_DIETARY_SODIUM = "series.dietary_sodium.created"
+    SERIES_DIETARY_CAFFEINE = "series.dietary_caffeine.created"
 
     # Activity distance
     SERIES_DISTANCE_WALKING_RUNNING = "series.distance_walking_running.created"
@@ -225,12 +239,14 @@ EVENT_TYPE_DESCRIPTIONS: dict[WebhookEventType, str] = {
     WebhookEventType.ENVIRONMENTAL_CREATED: (
         "Any environmental samples (audio exposure, UV, weather, etc.) were ingested."
     ),
+    WebhookEventType.NUTRITION_CREATED: "Any dietary intake samples (energy, macros, micronutrients) were ingested.",
     # Granular series events
     WebhookEventType.SERIES_HEART_RATE: "Continuous heart-rate samples were ingested.",
     WebhookEventType.SERIES_RESTING_HEART_RATE: "Resting heart-rate samples were ingested.",
     WebhookEventType.SERIES_HEART_RATE_RECOVERY_ONE_MINUTE: "1-minute heart-rate recovery samples were ingested.",
     WebhookEventType.SERIES_WALKING_HEART_RATE_AVERAGE: "Walking heart-rate average samples were ingested.",
     WebhookEventType.SERIES_ATRIAL_FIBRILLATION_BURDEN: "Atrial fibrillation burden samples were ingested.",
+    WebhookEventType.SERIES_MAX_HEART_RATE: "Maximum heart rate (user profile) samples were ingested.",
     WebhookEventType.SERIES_HEART_RATE_VARIABILITY_SDNN: "HRV SDNN samples were ingested.",
     WebhookEventType.SERIES_HEART_RATE_VARIABILITY_RMSSD: "HRV RMSSD samples were ingested.",
     WebhookEventType.SERIES_GARMIN_BODY_BATTERY: "Garmin body battery samples were ingested.",
@@ -255,6 +271,8 @@ EVENT_TYPE_DESCRIPTIONS: dict[WebhookEventType, str] = {
     WebhookEventType.SERIES_BODY_FAT_MASS: "Body fat mass samples were ingested.",
     WebhookEventType.SERIES_SKELETAL_MUSCLE_MASS: "Skeletal muscle mass samples were ingested.",
     WebhookEventType.SERIES_WAIST_CIRCUMFERENCE: "Waist circumference samples were ingested.",
+    WebhookEventType.SERIES_BONE_MASS: "Bone mass samples were ingested.",
+    WebhookEventType.SERIES_BODY_WATER_MASS: "Body water mass samples were ingested.",
     WebhookEventType.SERIES_BODY_TEMPERATURE: "Core body temperature samples were ingested.",
     WebhookEventType.SERIES_SKIN_TEMPERATURE: "Skin temperature samples were ingested.",
     WebhookEventType.SERIES_SKIN_TEMPERATURE_DEVIATION: "Skin temperature deviation samples were ingested.",
@@ -282,6 +300,14 @@ EVENT_TYPE_DESCRIPTIONS: dict[WebhookEventType, str] = {
     WebhookEventType.SERIES_NUMBER_OF_ALCOHOLIC_BEVERAGES: "Alcoholic beverage count samples were ingested.",
     WebhookEventType.SERIES_NIKE_FUEL: "Nike Fuel samples were ingested.",
     WebhookEventType.SERIES_HYDRATION: "Hydration samples were ingested.",
+    WebhookEventType.SERIES_DIETARY_ENERGY_CONSUMED: "Dietary energy (kcal eaten) samples were ingested.",
+    WebhookEventType.SERIES_DIETARY_CARBOHYDRATES: "Dietary carbohydrate samples were ingested.",
+    WebhookEventType.SERIES_DIETARY_PROTEIN: "Dietary protein samples were ingested.",
+    WebhookEventType.SERIES_DIETARY_FAT_TOTAL: "Dietary total fat samples were ingested.",
+    WebhookEventType.SERIES_DIETARY_FIBER: "Dietary fiber samples were ingested.",
+    WebhookEventType.SERIES_DIETARY_SUGAR: "Dietary sugar samples were ingested.",
+    WebhookEventType.SERIES_DIETARY_SODIUM: "Dietary sodium samples were ingested.",
+    WebhookEventType.SERIES_DIETARY_CAFFEINE: "Dietary caffeine samples were ingested.",
     WebhookEventType.SERIES_DISTANCE_WALKING_RUNNING: "Walking/running distance samples were ingested.",
     WebhookEventType.SERIES_DISTANCE_CYCLING: "Cycling distance samples were ingested.",
     WebhookEventType.SERIES_DISTANCE_SWIMMING: "Swimming distance samples were ingested.",
@@ -328,6 +354,7 @@ EVENT_TYPE_GROUPS: dict[str, list[str]] = {
         WebhookEventType.SERIES_HEART_RATE_RECOVERY_ONE_MINUTE,
         WebhookEventType.SERIES_WALKING_HEART_RATE_AVERAGE,
         WebhookEventType.SERIES_ATRIAL_FIBRILLATION_BURDEN,
+        WebhookEventType.SERIES_MAX_HEART_RATE,
     ],
     WebhookEventType.HEART_RATE_VARIABILITY_CREATED: [
         WebhookEventType.SERIES_HEART_RATE_VARIABILITY_SDNN,
@@ -366,6 +393,8 @@ EVENT_TYPE_GROUPS: dict[str, list[str]] = {
         WebhookEventType.SERIES_BODY_FAT_MASS,
         WebhookEventType.SERIES_SKELETAL_MUSCLE_MASS,
         WebhookEventType.SERIES_WAIST_CIRCUMFERENCE,
+        WebhookEventType.SERIES_BONE_MASS,
+        WebhookEventType.SERIES_BODY_WATER_MASS,
     ],
     WebhookEventType.BODY_TEMPERATURE_CREATED: [
         WebhookEventType.SERIES_BODY_TEMPERATURE,
@@ -440,5 +469,15 @@ EVENT_TYPE_GROUPS: dict[str, list[str]] = {
         WebhookEventType.SERIES_INHALER_USAGE,
         WebhookEventType.SERIES_WEATHER_TEMPERATURE,
         WebhookEventType.SERIES_WEATHER_HUMIDITY,
+    ],
+    WebhookEventType.NUTRITION_CREATED: [
+        WebhookEventType.SERIES_DIETARY_ENERGY_CONSUMED,
+        WebhookEventType.SERIES_DIETARY_CARBOHYDRATES,
+        WebhookEventType.SERIES_DIETARY_PROTEIN,
+        WebhookEventType.SERIES_DIETARY_FAT_TOTAL,
+        WebhookEventType.SERIES_DIETARY_FIBER,
+        WebhookEventType.SERIES_DIETARY_SUGAR,
+        WebhookEventType.SERIES_DIETARY_SODIUM,
+        WebhookEventType.SERIES_DIETARY_CAFFEINE,
     ],
 }

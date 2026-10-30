@@ -336,6 +336,24 @@ EXAMPLE_PAYLOADS: dict[str, dict] = {
     WebhookEventType.SERIES_HYDRATION: _ts_payload(
         WebhookEventType.SERIES_HYDRATION, "hydration", "apple", "mL", 2200.0
     ),
+    WebhookEventType.NUTRITION_CREATED: _ts_payload(
+        WebhookEventType.NUTRITION_CREATED, "dietary_energy_consumed", "apple", "kcal", 650.0
+    ),
+    WebhookEventType.SERIES_DIETARY_ENERGY_CONSUMED: _ts_payload(
+        WebhookEventType.SERIES_DIETARY_ENERGY_CONSUMED, "dietary_energy_consumed", "apple", "kcal", 650.0
+    ),
+    WebhookEventType.SERIES_DIETARY_PROTEIN: _ts_payload(
+        WebhookEventType.SERIES_DIETARY_PROTEIN, "dietary_protein", "apple", "g", 32.0
+    ),
+    WebhookEventType.SERIES_BONE_MASS: _ts_payload(
+        WebhookEventType.SERIES_BONE_MASS, "bone_mass", "samsung", "kg", 3.1
+    ),
+    WebhookEventType.SERIES_BODY_WATER_MASS: _ts_payload(
+        WebhookEventType.SERIES_BODY_WATER_MASS, "body_water_mass", "samsung", "kg", 41.5
+    ),
+    WebhookEventType.SERIES_MAX_HEART_RATE: _ts_payload(
+        WebhookEventType.SERIES_MAX_HEART_RATE, "max_heart_rate", "polar", "bpm", 188.0
+    ),
     # Activity distance
     WebhookEventType.SERIES_DISTANCE_WALKING_RUNNING: _ts_payload(
         WebhookEventType.SERIES_DISTANCE_WALKING_RUNNING, "distance_walking_running", "apple", "m", 6240.0
