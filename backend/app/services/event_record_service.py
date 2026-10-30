@@ -570,6 +570,12 @@ class EventRecordService(
                     cycle_length=mcd.cycle_length if mcd else None,
                     is_predicted_cycle=mcd.is_predicted_cycle if mcd else None,
                     pregnancy_snapshot=mcd.pregnancy_snapshot if mcd else None,
+                    predicted_cycle_length=mcd.predicted_cycle_length if mcd else None,
+                    period_length=mcd.period_length if mcd else None,
+                    days_until_next_phase=mcd.days_until_next_phase if mcd else None,
+                    fertile_window_start=mcd.fertile_window_start if mcd else None,
+                    length_of_fertile_window=mcd.length_of_fertile_window if mcd else None,
+                    daily_flow=mcd.daily_flow if mcd else None,
                 )
             case "workout":
                 avg_pace: int | None = None
@@ -1006,6 +1012,7 @@ class EventRecordService(
                     has_specified_cycle_length=details.has_specified_cycle_length if details else None,
                     has_specified_period_length=details.has_specified_period_length if details else None,
                     pregnancy_snapshot=details.pregnancy_snapshot if details else None,
+                    daily_flow=details.daily_flow if details else None,
                 )
             )
 

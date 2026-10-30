@@ -36,3 +36,7 @@ class MenstrualCycleDetails(EventRecordDetail):
 
     # Populated when currentPhase is pregnancy
     pregnancy_snapshot: Mapped[json_binary | None]
+
+    # Cycles derived from SDK data (Apple, Health Connect, Samsung): one entry per day with a
+    # flow record, [{"date": "YYYY-MM-DD", "day_in_cycle": n, "flow": "light"}, ...]
+    daily_flow: Mapped[json_binary | None]

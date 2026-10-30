@@ -1,0 +1,54 @@
+---
+title: "Hebos: tipos de salud ampliados y ciclo menstrual (SDK)"
+description: "Qué registros del SDK móvil (Apple HealthKit, Health Connect, Samsung) guarda Open Wearables y cómo se convierten"
+---
+
+Todos van en `data.records[]` con la forma de siempre (`id`, `type`, `value`, `unit`, `startDate`, `endDate`, `zoneOffset`, `source`).
+
+## Composición corporal
+
+| `type` | Serie | Unidad |
+|---|---|---|
+| `BONE_MASS` (Health Connect / Samsung) | `bone_mass` | kg |
+| `BODY_WATER_MASS` (Health Connect / Samsung) | `body_water_mass` | kg |
+
+## Temperatura
+
+Nunca va a `body_temperature` (temperatura central).
+
+| `type` | Qué se guarda |
+|---|---|
+| `HKQuantityTypeIdentifierAppleSleepingWristTemperature` | Si el valor absoluto es de 5 ºC o más, la lectura absoluta en `skin_temperature` **y** su desviación en `skin_temperature_deviation` (lectura − media de las noches anteriores; hacen falta al menos 3 noches en los últimos 28 días). Si es menor de 5 ºC, ya es una desviación y va solo a `skin_temperature_deviation`. |
+| `SKIN_TEMPERATURE` (Health Connect `SkinTemperatureRecord`) | Un registro por cada delta del registro, en ºC: va a `skin_temperature_deviation`. Si alguien manda la lectura absoluta (`≥ 5 ºC`), va a `skin_temperature`. |
+| `BASAL_BODY_TEMPERATURE` | `body_temperature` (es absoluta) |
+
+## Nutrición e hidratación
+
+Los identificadores son los mismos que en upstream: `HKQuantityTypeIdentifierDietary*` en Apple y `DIETARY_*` en Health Connect (`DIETARY_ENERGY`, `DIETARY_CARBOHYDRATE`, `DIETARY_PROTEIN`, `DIETARY_TOTAL_FAT`…). Se guardan en las series `dietary_*`, que se suman por día, con la unidad convertida a la de la serie:
+
+- masa: `g`, `mg`, `mcg`/`µg`;
+- energía: `kcal`, `Cal` (la caloría de alimento de HealthKit) y `kJ` (× 0,239006);
+- agua (`HKQuantityTypeIdentifierDietaryWater`, `HYDRATION`): `L` o `mL`, y se guarda en mL.
+
+Avisos: `nutrition.created` (grupo) y los granulares de los macros principales.
+
+## Ciclo menstrual
+
+| `type` | `value` | Flujo del día |
+|---|---|---|
+| `HKCategoryTypeIdentifierMenstrualFlow` | 1 sin especificar, 2 leve, 3 moderado, 4 abundante, 5 ninguno | `unspecified`, `light`, `medium`, `heavy`, `none` |
+| `HKCategoryTypeIdentifierIntermenstrualBleeding` | (se ignora) | `spotting` |
+| `MENSTRUATION_FLOW` o `MENSTRUATION` (Health Connect `MenstruationFlowRecord.flow`) | 0 desconocido, 1 leve, 2 moderado, 3 abundante | `unspecified`, `light`, `medium`, `heavy` |
+| `MENSTRUATION_PERIOD` (Health Connect `MenstruationPeriodRecord`) | cualquiera (p. ej. 1) | `unspecified` en cada día de `startDate` a `endDate` |
+| `INTERMENSTRUAL_BLEEDING` | (se ignora) | `spotting` |
+
+Cómo se guarda:
+
+1. Cada registro da una muestra por **día local** en la serie `menstrual_flow` (0 ninguno, 1 manchado, 2 leve, 3 moderado, 4 abundante, 5 sangrado sin especificar). Si un día tiene varios registros, gana el sangrado más fuerte.
+2. Después de cada subida se recalculan los ciclos de ese usuario y esa fuente:
+   - un **periodo** es una racha de días con sangrado (el manchado no cuenta); un día con sangrado a más de 7 días del anterior empieza un periodo nuevo;
+   - un **ciclo** va del primer día de un periodo al día anterior al siguiente. El último ciclo queda abierto hasta el último día con datos.
+3. Cada ciclo es un `event_record` de categoría `menstrual_cycle`, con `external_id` `<proveedor>:cycle:<fecha de inicio>`, y su `menstrual_cycle_details`: `period_length`, `cycle_length` (solo los ciclos cerrados), `day_in_cycle`, `current_phase_type` (`menstrual` mientras dura el periodo del ciclo abierto; si no, vacío), `predicted_cycle_length` (media de los últimos ciclos cerrados, solo en el abierto) y `daily_flow` (`[{date, day_in_cycle, flow}]`).
+4. Solo se reescriben los ciclos que cambian. Cada ciclo nuevo o cambiado emite `menstrual_cycle.created` con esos campos y `daily_flow`.
+
+No se predice la ovulación ni se infieren otras fases. Garmin no entra por aquí.

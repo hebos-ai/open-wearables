@@ -140,8 +140,15 @@ _SDK_METRIC_MAP = {
 
 # SDK providers that also pull cloud series contribute extra timeseries beyond the
 # SDK maps. google is hybrid: Health Connect SDK + Health API daily rollups.
+# Series the SDK import derives instead of mapping 1:1 (menstrual flow, wrist temperature split).
+_SDK_DERIVED_SERIES: frozenset[SeriesType] = frozenset(
+    {SeriesType.menstrual_flow, SeriesType.skin_temperature, SeriesType.skin_temperature_deviation}
+)
+
 _EXTRA_SDK_SERIES: dict[str, frozenset[SeriesType]] = {
-    "google": frozenset(s for m in GOOGLE_HEALTH_API_METRICS for s in m.series_types()),
+    "apple": _SDK_DERIVED_SERIES,
+    "samsung": _SDK_DERIVED_SERIES,
+    "google": frozenset(s for m in GOOGLE_HEALTH_API_METRICS for s in m.series_types()) | _SDK_DERIVED_SERIES,
 }
 
 
