@@ -113,6 +113,13 @@ AGGREGATION_METHOD_BY_TYPE: dict[SeriesType, AggregationMethod] = {
     SeriesType.number_of_times_fallen: AggregationMethod.SUM,
     SeriesType.number_of_alcoholic_beverages: AggregationMethod.SUM,
     SeriesType.nike_fuel: AggregationMethod.SUM,
+    SeriesType.hydration: AggregationMethod.SUM,
+    # ── Heart / body composition added for the health inventory ──
+    SeriesType.max_heart_rate: AggregationMethod.MAX,
+    SeriesType.bone_mass: AggregationMethod.AVG,
+    SeriesType.body_water_mass: AggregationMethod.AVG,
+    # ── Nutrition: intake adds up over the day ──
+    **{series_type: AggregationMethod.SUM for series_type in SeriesType if series_type.value.startswith("dietary_")},
 }
 
 
