@@ -12,6 +12,7 @@ import re
 from typing import Any
 from uuid import UUID
 
+from app.constants.devices_map import resolve_device_name
 from app.constants.webhooks.events import SERIES_TYPE_TO_GRANULAR_EVENT, SERIES_TYPE_TO_GROUP_EVENT
 from app.schemas.webhooks.event_types import WebhookEventType
 from app.services.outgoing_webhooks import svix as svix_service
@@ -93,7 +94,7 @@ def on_workout_created(
                 "end_time": end_time,
                 "zone_offset": zone_offset,
                 "duration_seconds": duration_seconds,
-                "source": {"provider": provider, "device": device},
+                "source": {"provider": provider, "device": device, "device_name": resolve_device_name(device)},
                 "calories_kcal": calories_kcal,
                 "distance_meters": distance_meters,
                 "avg_heart_rate_bpm": avg_heart_rate_bpm,
