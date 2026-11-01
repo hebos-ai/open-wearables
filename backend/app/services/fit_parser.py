@@ -61,6 +61,9 @@ _RECORD_FIELD_MAP: tuple[_FieldMapping, ...] = (
     _FieldMapping(("stance_time_balance",), SeriesType.running_stance_time_balance),
 )
 
+#: Every series a FIT ``record`` message can yield (providers' coverage reuses it).
+FIT_RECORD_SERIES: frozenset[SeriesType] = frozenset(m.series_type for m in _RECORD_FIELD_MAP)
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------

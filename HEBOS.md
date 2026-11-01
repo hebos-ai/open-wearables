@@ -66,7 +66,7 @@ Garmin no pasa por aquí: su crudo lo guarda `garmin-connector` (`garmin_webhook
 
 ### Muestras de entreno (`INGEST_WORKOUT_SAMPLES`)
 
-Con `true` se guardan las muestras por segundo de cada entreno (FC, velocidad, cadencia, potencia, altitud y GPS) en `data_point_series`. En Hebos va a `true` (`.env.hebos.example`). Hoy solo lo aprovecha **Strava** (streams); Garmin también lo usa, pero en Hebos no entra por Open Wearables. Ocupa bastante base de datos: hay que vigilar el tamaño de `data_point_series` y la archivación (`archival_setting`).
+Con `true` se guardan las muestras por segundo de cada entreno (FC, velocidad, cadencia, potencia, altitud y GPS) en `data_point_series`. En Hebos va a `true` (`.env.hebos.example`). Lo aprovechan **Strava** (streams) y **Wahoo** (descarga y lee el FIT del entreno: `app/services/workout_fit_samples.py`); **COROS** usará el mismo módulo en cuanto tenga acceso de partner y su manejador de entrenos. Garmin también lo usa, pero en Hebos no entra por Open Wearables. Límites del FIT: `WORKOUT_FIT_MAX_BYTES` (25 MB) y `WORKOUT_FIT_DOWNLOADS_PER_SYNC` (25 ficheros por backfill; los avisos siempre bajan su fichero). Ocupa bastante base de datos: hay que vigilar el tamaño de `data_point_series` y la archivación (`archival_setting`).
 
 `STORE_FIT_FILES=true` guardaría además los FIT originales en S3. Necesita el mismo bucket, así que también se queda apagado.
 

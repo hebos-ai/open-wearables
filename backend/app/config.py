@@ -111,6 +111,12 @@ class Settings(BaseSettings):
     # data_point_series on workout webhook arrival. Significantly increases DB storage.
     # Per-provider granularity will be added via ProviderSetting in a future release.
     ingest_workout_samples: bool = False
+    # Providers whose samples live only in the workout's FIT file (Wahoo, COROS): the file
+    # is downloaded and parsed when ingest_workout_samples is on. A file bigger than this is
+    # skipped, and a single backfill run downloads at most workout_fit_downloads_per_sync
+    # files (newest first); webhooks always fetch their one file. Keeps provider limits safe.
+    workout_fit_max_bytes: int = Field(25_000_000, ge=1)
+    workout_fit_downloads_per_sync: int = Field(25, ge=0)
 
     # Whether to store raw FIT files in S3 when received via provider APIs.
     # Independent of ingest_workout_samples (DB samples) and raw_payload_storage (JSON payloads).

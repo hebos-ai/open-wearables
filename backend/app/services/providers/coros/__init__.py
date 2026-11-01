@@ -11,6 +11,14 @@ and payload documentation is shared only after approval. Until then this package
 
 Publicly stated by COROS (not yet verifiable against docs): OAuth 2.0, push notifications of
 completed workouts, FIT download, structured-workout and training-plan push to athletes.
+
+Per-sample data: COROS, like Wahoo, carries the samples only in the workout's FIT file. The
+workout handler, once mapped, stores them with
+``app.services.workout_fit_samples.ingest_workout_fit(db, provider="coros", fit_url=...)``
+(download with size cap and 429 back-off, ``fit_parser``, ``data_point_series``) *before*
+``create_detail`` emits ``workout.created``, and caps backfills with
+``settings.workout_fit_downloads_per_sync``; then ``coverage.TIMESERIES`` becomes
+``fit_parser.FIT_RECORD_SERIES``. The path is already covered by tests with ``provider="coros"``.
 """
 
 from app.services.providers.coros.strategy import CorosStrategy
