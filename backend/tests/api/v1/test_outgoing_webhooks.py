@@ -124,6 +124,23 @@ class TestWebhookEmit:
         assert data["avg_cadence"] == 88.0
 
     @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
+    def test_on_workout_created_includes_device_marketing_name(self, mock_task: MagicMock) -> None:
+        on_workout_created(
+            record_id=uuid4(),
+            user_id=uuid4(),
+            provider="apple",
+            device="Watch6,1",
+            workout_type="running",
+            start_time="2026-10-10T07:00:00+00:00",
+            end_time="2026-10-10T08:00:00+00:00",
+            zone_offset="+02:00",
+            duration_seconds=3600,
+        )
+        source = mock_task.delay.call_args[0][1]["data"]["source"]
+        assert source["device"] == "Watch6,1"
+        assert source["device_name"] == "Apple Watch Series 6 40mm (GPS)"
+
+    @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
     def test_on_sleep_created_dispatches(self, mock_task: MagicMock) -> None:
         uid = uuid4()
         rid = uuid4()

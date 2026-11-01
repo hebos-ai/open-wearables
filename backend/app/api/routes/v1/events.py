@@ -9,10 +9,12 @@ from app.schemas.responses.activity import (
     MenstrualCycleRecord,
     SleepSession,
     Workout,
+    WorkoutStream,
 )
 from app.schemas.utils import PaginatedResponse
 from app.services import ApiKeyDep
 from app.services.event_record_service import event_record_service
+from app.services.workout_stream_service import workout_stream_service
 from app.utils.dates import DateTimeQueryParam, parse_query_datetime
 
 router = APIRouter()
@@ -38,6 +40,23 @@ def list_workouts(
         record_type=record_type,
     )
     return event_record_service.get_workouts(db, user_id, params)
+
+
+@router.get("/users/{user_id}/events/workouts/{workout_id}/stream")
+def get_workout_stream(
+    user_id: UUID,
+    workout_id: UUID,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> WorkoutStream:
+    """Per-sample stream of one workout on a regular grid (HR, power, speed, cadence, elevation, GPS).
+
+    404 when the workout is not the user's, or no samples were recorded for it.
+    """
+    stream = workout_stream_service.get_stream(db, user_id, workout_id)
+    if stream is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workout stream not found")
+    return WorkoutStream(**stream)
 
 
 @router.get("/users/{user_id}/events/sleep")

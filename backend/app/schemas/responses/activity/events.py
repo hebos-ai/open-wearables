@@ -39,6 +39,29 @@ class WorkoutDetailed(Workout):
     heart_rate_samples: list[TimeSeriesSample] | None = None
 
 
+class WorkoutStream(BaseModel):
+    """Samples of one workout on a regular grid: ``t[i]`` seconds from the start.
+
+    A column is ``None`` when the workout has no value for it at all; inside a
+    column, ``None`` is a grid slot with no measurement (never interpolated).
+    """
+
+    workout_id: UUID
+    provider: str
+    start_time: datetime
+    sample_rate_sec: float = Field(..., description="Seconds between two grid slots")
+    t: list[float]
+    heart_rate: list[float | None] | None = None
+    power: list[float | None] | None = Field(None, description="Watts")
+    speed: list[float | None] | None = Field(None, description="Metres per second")
+    cadence: list[float | None] | None = None
+    elevation: list[float | None] | None = Field(None, description="Metres")
+    latitude: list[float | None] | None = None
+    longitude: list[float | None] | None = None
+    distance: list[float | None] | None = Field(None, description="Cumulative metres")
+    temperature: list[float | None] | None = Field(None, description="Celsius")
+
+
 class Macros(BaseModel):
     protein_g: float | None = None
     carbohydrates_g: float | None = None
