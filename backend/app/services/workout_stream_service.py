@@ -75,6 +75,19 @@ _POLAR_SAMPLE_TYPES: dict[str, tuple[str, float]] = {
     "10": ("distance", 1.0),
 }
 
+#: Distance series written as INCREMENTS (each sample = metres covered since the
+#: previous one): Apple Watch / Health Connect during a workout. When a workout has no
+#: speed series of its own, its speed and cumulative distance come from these.
+_DISTANCE_INCREMENT_SERIES: tuple[SeriesType, ...] = (
+    SeriesType.distance_walking_running,
+    SeriesType.distance_cycling,
+    SeriesType.distance_swimming,
+)
+
+#: An increment whose next one starts later than this is a pause: no speed is
+#: derived across it (it would be an average over the pause, not a measurement).
+MAX_INCREMENT_GAP_SEC = 30.0
+
 #: Hard cap on grid length (24 h at 1 s), to keep one response bounded.
 MAX_SAMPLES = 86_400
 
@@ -194,6 +207,32 @@ def _parse_ts(raw: Any) -> datetime | None:
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
+def distance_increments_to_points(
+    increments: list[tuple[datetime, float]],
+) -> list[tuple[datetime, str, float]]:
+    """Distance increments ``(start, metres)`` -> ``distance`` (cumulative) and ``speed`` points.
+
+    Each increment covers from its start to the start of the next one. Its speed is
+    ``metres / gap`` and the cumulative distance is placed at its end. The last increment
+    has no known end: it adds no speed, only its distance at its own start. Increments
+    across a pause (gap > ``MAX_INCREMENT_GAP_SEC``) add distance but no speed.
+    """
+    ordered = sorted((at, v) for at, v in increments if v is not None and v >= 0)
+    points: list[tuple[datetime, str, float]] = []
+    total = 0.0
+    for k, (at, metres) in enumerate(ordered):
+        total += metres
+        nxt = ordered[k + 1][0] if k + 1 < len(ordered) else None
+        if nxt is None:
+            points.append((at, "distance", round(total, 2)))
+            break
+        gap = (nxt - at).total_seconds()
+        points.append((nxt, "distance", round(total, 2)))
+        if 0 < gap <= MAX_INCREMENT_GAP_SEC:
+            points.append((at, "speed", round(metres / gap, 3)))
+    return points
+
+
 def series_to_stream(
     points: list[tuple[datetime, str, float]],
     start: datetime,
@@ -282,7 +321,34 @@ class WorkoutStreamService:
             for at, type_id, value in rows
             if column_of[type_id][1] == best_rank[column_of[type_id][0]] and value is not None
         ]
+        if not any(column in ("speed", "distance") for _, column, _ in points):
+            points += self._speed_from_distance(db, sources, record)
         return series_to_stream(points, record.start_datetime, record.end_datetime)
+
+    def _speed_from_distance(
+        self, db: DbSession, sources: Any, record: EventRecord
+    ) -> list[tuple[datetime, str, float]]:
+        """Speed and distance from distance increments, for workouts without a speed series."""
+        type_ids = [get_series_type_id(s) for s in _DISTANCE_INCREMENT_SERIES]
+        rows = db.execute(
+            select(DataPointSeries.recorded_at, DataPointSeries.series_type_definition_id, DataPointSeries.value)
+            .where(
+                DataPointSeries.data_source_id.in_(sources),
+                DataPointSeries.series_type_definition_id.in_(type_ids),
+                DataPointSeries.is_daily_total.isnot(True),
+                DataPointSeries.recorded_at >= record.start_datetime,
+                DataPointSeries.recorded_at <= record.end_datetime,
+            )
+            .order_by(DataPointSeries.recorded_at)
+        ).all()
+        by_type: dict[int, list[tuple[datetime, float]]] = {}
+        for at, type_id, value in rows:
+            if value is not None:
+                by_type.setdefault(type_id, []).append((at, float(value)))
+        if not by_type:
+            return []
+        # The workout's own distance series is the densest one in its window.
+        return distance_increments_to_points(max(by_type.values(), key=len))
 
     def _from_polar(self, db: DbSession, user_id: UUID, record: EventRecord) -> dict[str, Any] | None:
         from app.services.providers.factory import ProviderFactory
@@ -308,6 +374,7 @@ workout_stream_service = WorkoutStreamService()
 __all__ = [
     "STREAM_COLUMNS",
     "WorkoutStreamService",
+    "distance_increments_to_points",
     "polar_exercise_to_stream",
     "series_to_stream",
     "workout_stream_service",

@@ -1,7 +1,7 @@
 import hashlib
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from logging import Logger, getLogger
 from typing import Iterable, TypedDict
@@ -171,6 +171,39 @@ def _parse_sync_request(raw: dict) -> tuple[SDKSyncRequest, list[InvalidRecord]]
     return request, dropped
 
 
+#: Samsung Health exercise log sample type -> series (speed already in m/s, power in W).
+_WORKOUT_LOG_SERIES: dict[str, SeriesType] = {
+    "heartRate": SeriesType.heart_rate,
+    "cadence": SeriesType.cadence,
+    "speed": SeriesType.speed,
+    "power": SeriesType.power,
+}
+
+
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        d = Decimal(str(value))
+    except ArithmeticError:
+        return None
+    return d if d.is_finite() else None
+
+
+def _point_time(point: dict) -> datetime | None:
+    """Time of a route point or log sample: ISO string, or epoch milliseconds."""
+    raw = point.get("timestamp", point.get("date"))
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return datetime.fromtimestamp(raw / 1000, tz=timezone.utc)
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
 class ImportService:
     def __init__(
         self,
@@ -216,6 +249,14 @@ class ImportService:
             if duration is None:
                 duration = int((wjson.endDate - wjson.startDate).total_seconds())
 
+            # Per-sample data that rides inside the workout itself: the GPS route
+            # (Health Connect, Samsung Health) and Samsung's exercise log (heart rate,
+            # cadence, speed, power). Stored as ordinary series of the same provider, so
+            # the workout stream (``workout_stream_service``) finds them in its window.
+            time_series_samples = time_series_samples + self._route_and_log_samples(
+                wjson, user_uuid, provider, device_model, software_version, original_source_name
+            )
+
             workout_type = wjson.type.lower() if wjson.type else None
             type = get_unified_apple_workout_type_sdk(workout_type).value if workout_type else None
 
@@ -242,6 +283,71 @@ class ImportService:
             )
 
             yield record, detail, time_series_samples
+
+    def _route_and_log_samples(
+        self,
+        wjson: Workout,
+        user_uuid: UUID,
+        provider: str,
+        device_model: str | None,
+        software_version: str | None,
+        source_name: str | None,
+    ) -> list[TimeSeriesSampleCreate]:
+        """GPS route points and in-workout samples of one SDK workout, as series samples.
+
+        Route points: ``{timestamp, latitude, longitude, altitudeM}`` -> latitude, longitude
+        and elevation. Samples (Samsung's exercise log): ``{timestamp, type, value}`` with
+        ``heartRate`` / ``cadence`` / ``speed`` (m/s) / ``power`` (W). A point without its own
+        time is skipped: placing it would be a guess. Out-of-range coordinates are dropped.
+        """
+        out: list[TimeSeriesSampleCreate] = []
+
+        def add(at: datetime, series_type: SeriesType, value: object) -> None:
+            v = _decimal_or_none(value)
+            if v is None:
+                return
+            sample = TimeSeriesSampleCreate(
+                id=uuid4(),
+                external_id=None,
+                user_id=user_uuid,
+                source=source_name,
+                device_model=device_model,
+                software_version=software_version,
+                provider=provider,
+                recorded_at=at,
+                zone_offset=wjson.zoneOffset,
+                value=v,
+                series_type=series_type,
+                is_daily_total=daily_total_flag(series_type, is_daily=False),
+            )
+            if series_type == SeriesType.heart_rate:
+                out.append(HeartRateSampleCreate(**sample.model_dump()))
+            else:
+                out.append(sample)
+
+        for point in wjson.route or []:
+            if not isinstance(point, dict):
+                continue
+            at = _point_time(point)
+            lat, lng = _decimal_or_none(point.get("latitude")), _decimal_or_none(point.get("longitude"))
+            if at is None or lat is None or lng is None or abs(lat) > 90 or abs(lng) > 180:
+                continue
+            add(at, SeriesType.latitude, lat)
+            add(at, SeriesType.longitude, lng)
+            altitude = point.get("altitudeM", point.get("altitude"))
+            if altitude is not None:
+                add(at, SeriesType.elevation, altitude)
+
+        for point in wjson.samples or []:
+            if not isinstance(point, dict):
+                continue
+            series_type = _WORKOUT_LOG_SERIES.get(str(point.get("type") or ""))
+            at = _point_time(point)
+            if series_type is None or at is None:
+                continue
+            add(at, series_type, point.get("value"))
+
+        return out
 
     def _normalize_unit(self, series_type: SeriesType, value: Decimal, provider: str | None = None) -> Decimal:
         match series_type:
@@ -586,7 +692,9 @@ class ImportService:
 
             # Bulk create details (requires event_record to exist due to FK)
             if details_to_insert:
-                self.event_record_service.bulk_create_details(db_session, details_to_insert, detail_type="workout")
+                self.event_record_service.bulk_create_details(
+                    db_session, details_to_insert, detail_type="workout", origin="sdk"
+                )
             workouts_saved = len(inserted_ids)
 
             # Bulk create time series samples

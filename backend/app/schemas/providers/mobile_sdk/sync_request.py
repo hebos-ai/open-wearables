@@ -118,7 +118,7 @@ class Workout(BaseModel):
     notes: str | None = None
     values: list[WorkoutStatistic] | None = None
 
-    # everything below is unused for now
+    # route (GPS) and samples (Samsung exercise log) become series; segments, laps and metadata are unused
     segments: list[dict[str, Any]] | None = None
     laps: list[dict[str, Any]] | None = None
     route: list[dict[str, Any]] | None = None
