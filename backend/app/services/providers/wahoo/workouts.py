@@ -2,6 +2,12 @@
 
 Only *completed* workouts are stored: a Wahoo workout without ``workout_summary`` is a
 planned/upcoming entry (e.g. one created by the planned-workout push) and is skipped.
+
+Per-sample data (HR, power, speed, cadence, GPS, altitude, temperature) exists only in the
+workout's FIT file (``workout_summary.file.url``, a CDN link). With
+``INGEST_WORKOUT_SAMPLES`` on, a *newly stored* workout gets its FIT downloaded and parsed
+before ``workout.created`` is emitted, so the stream is ready when the event arrives. A
+backfill downloads at most ``WORKOUT_FIT_DOWNLOADS_PER_SYNC`` files per run.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -20,6 +26,7 @@ from app.schemas.model_crud.activities import (
 from app.schemas.providers.wahoo import WahooWorkoutJSON, WahooWorkoutListJSON, WahooWorkoutSummaryJSON
 from app.services.event_record_service import event_record_service
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
+from app.services.workout_fit_samples import ingest_workout_fit
 from app.utils.dates import offset_to_iso
 from app.utils.structured_logging import log_structured
 
@@ -183,23 +190,56 @@ class WahooWorkouts(BaseWorkoutsTemplate):
     # Persistence
     # ------------------------------------------------------------------
 
-    def save_workout(self, db: DbSession, user_id: UUID, workout: WahooWorkoutJSON) -> UUID | None:
+    def save_workout(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        workout: WahooWorkoutJSON,
+        *,
+        fetch_samples: bool = True,
+    ) -> UUID | None:
         """Persist one completed workout. Returns the record id, or None if it is not completed."""
+        return self._store_workout(db, user_id, workout, fetch_samples=fetch_samples)[0]
+
+    def _store_workout(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        workout: WahooWorkoutJSON,
+        *,
+        fetch_samples: bool,
+    ) -> tuple[UUID | None, bool]:
+        """Persist one workout; second item: whether it is new and has a FIT to read (samples on)."""
         if workout.workout_summary is None:
-            return None
+            return None, False
         record, detail = self._normalize_workout(workout, user_id)
         existing = event_record_service.crud.get_by_external_id(db, user_id, record.external_id or "", provider="wahoo")
         if existing is not None:
             if existing.start_datetime == record.start_datetime and existing.end_datetime == record.end_datetime:
-                return existing.id
+                return existing.id, False
             # Edited on Wahoo (new duration): replace instead of keeping two versions.
             event_record_service.crud.delete_by_external_id(db, user_id, record.external_id or "", provider="wahoo")
         created = event_record_service.create(db, record)
         if created.id != record.id:
             # Already stored (overlapping pull window or a Wahoo webhook retry): keep it idempotent.
-            return created.id
+            return created.id, False
+        fit_url = workout.workout_summary.file.url if workout.workout_summary.file else None
+        wants_fit = bool(fit_url and settings.ingest_workout_samples)
+        if wants_fit and fetch_samples:
+            # Before the detail: create_detail emits workout.created, the stream must be ready.
+            ingest_workout_fit(
+                db,
+                provider="wahoo",
+                user_id=user_id,
+                fit_url=fit_url,
+                activity_id=str(workout.id),
+                zone_offset=record.zone_offset,
+                api_base_url=self.api_base_url,
+                oauth=self.oauth,
+                connection_repo=self.connection_repo,
+            )
         event_record_service.create_detail(db, detail.model_copy(update={"record_id": created.id}))
-        return created.id
+        return created.id, wants_fit
 
     def load_data(self, db: DbSession, user_id: UUID, **kwargs: Any) -> int:
         """Pull completed workouts in [start_date, end_date] (defaults: last 30 days)."""
@@ -208,7 +248,27 @@ class WahooWorkouts(BaseWorkoutsTemplate):
         end = _parse_dt(kwargs.get("end_date") or kwargs.get("end"), now)
 
         count = 0
-        for workout in self.get_workouts(db, user_id, start, end):
-            if self.save_workout(db, user_id, workout) is not None:
+        budget = settings.workout_fit_downloads_per_sync
+        # Newest first: when the FIT budget runs out, the recent workouts keep their samples.
+        workouts = sorted(self.get_workouts(db, user_id, start, end), key=lambda w: _as_utc(w.starts), reverse=True)
+        skipped = 0
+        for workout in workouts:
+            record_id, wants_fit = self._store_workout(db, user_id, workout, fetch_samples=budget > 0)
+            if wants_fit:
+                if budget > 0:
+                    budget -= 1
+                else:
+                    skipped += 1
+            if record_id is not None:
                 count += 1
+        if skipped:
+            log_structured(
+                self.logger,
+                "info",
+                "Wahoo backfill reached the FIT download budget; older workouts kept without samples",
+                provider="wahoo",
+                user_id=str(user_id),
+                budget=settings.workout_fit_downloads_per_sync,
+                without_samples=skipped,
+            )
         return count

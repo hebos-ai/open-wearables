@@ -1,9 +1,11 @@
 from app.schemas.enums import SeriesType
 from app.schemas.enums.health_score_category import HealthScoreCategory
+from app.services.fit_parser import FIT_RECORD_SERIES
 
-# Wahoo exposes per-second samples only inside the FIT file (workout_summary.file.url);
-# OW does not parse it yet, so no timeseries are emitted.
-TIMESERIES: frozenset[SeriesType] = frozenset()
+# Wahoo exposes per-second samples only inside the FIT file (workout_summary.file.url).
+# Workout-context only, gated by settings.ingest_workout_samples: workouts.py downloads the
+# FIT and stores what its record messages carry (app/services/workout_fit_samples.py).
+TIMESERIES: frozenset[SeriesType] = FIT_RECORD_SERIES
 
 # EventRecordDetail fields populated by workouts.py from workout_summary
 # (/v1/workouts and the workout_summary webhook).
