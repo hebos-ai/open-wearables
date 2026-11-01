@@ -9,7 +9,7 @@ from app.mappings import (
     FKDataSource,
     FKSeriesTypeDefinition,
     PrimaryKey,
-    numeric_10_3,
+    numeric_15_6,
     str_10,
     str_100,
 )
@@ -33,6 +33,7 @@ class DataPointSeries(BaseDbModel):
     data_source_id: Mapped[FKDataSource]
     recorded_at: Mapped[datetime]
     zone_offset: Mapped[str_10 | None]
-    value: Mapped[numeric_10_3]
+    # 6 decimals: GPS coordinates (latitude/longitude) need ~0.1 m, 3 decimals were ~110 m.
+    value: Mapped[numeric_15_6]
     series_type_definition_id: Mapped[FKSeriesTypeDefinition]
     is_daily_total: Mapped[bool | None] # True = pre-aggregated daily total; False = granular intraday samples

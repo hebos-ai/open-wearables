@@ -516,8 +516,14 @@ class EventRecordService(
         record: EventRecord,
         data_source: DataSource,
         detail: EventRecordDetailCreate,
+        origin: str | None = None,
     ) -> None:
-        """Fire the appropriate outgoing webhook for a newly created event record."""
+        """Fire the appropriate outgoing webhook for a newly created event record.
+
+        ``origin`` says how the record reached Open Wearables when the provider alone does
+        not: ``"sdk"`` for the mobile SDK (HealthKit, Health Connect, Samsung Health), whose
+        ``google`` is Health Connect on the phone, not the Google Health cloud API.
+        """
         if not svix_service.is_enabled():
             return
         category = (record.category or "").lower()
@@ -599,6 +605,8 @@ class EventRecordService(
                     if detail.total_elevation_gain is not None
                     else None,
                     avg_pace_sec_per_km=avg_pace,
+                    external_id=record.external_id,
+                    origin=origin,
                     **EventRecordService._power_speed_cadence(detail),
                 )
 
@@ -617,6 +625,7 @@ class EventRecordService(
         db_session: DbSession,
         details: list[EventRecordDetailCreate],
         detail_type: str = "workout",
+        origin: str | None = None,
     ) -> None:
         """Bulk create event record details and fire one webhook per detail on commit."""
         self.event_record_detail_repo.bulk_create(db_session, details, detail_type=detail_type)  # ty:ignore[invalid-argument-type]
@@ -661,7 +670,7 @@ class EventRecordService(
         @sa_event.listens_for(db_session, "after_commit", once=True)
         def _dispatch_bulk_webhooks(session: DbSession) -> None:  # noqa: ARG001
             for record, data_source, detail in dispatches:
-                self._emit_event_record_webhook(record, data_source, detail)
+                self._emit_event_record_webhook(record, data_source, detail, origin)
 
     @handle_exceptions
     def _get_records_with_filters(

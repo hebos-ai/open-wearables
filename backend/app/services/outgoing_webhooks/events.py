@@ -81,6 +81,8 @@ def on_workout_created(
     avg_speed_mps: float | None = None,
     max_speed_mps: float | None = None,
     avg_cadence: float | None = None,
+    external_id: str | None = None,
+    origin: str | None = None,
 ) -> None:
     _dispatch(
         WebhookEventType.WORKOUT_CREATED,
@@ -106,6 +108,11 @@ def on_workout_created(
                 "avg_speed_mps": avg_speed_mps,
                 "max_speed_mps": max_speed_mps,
                 "avg_cadence": avg_cadence,
+                # The provider's own id of the workout (HealthKit UUID, Health Connect
+                # record id...) and how it arrived ("sdk" = the mobile SDK), so a
+                # consumer that also receives the same workout another way can match it.
+                "external_id": external_id,
+                "origin": origin,
             },
         },
         idempotency_key=f"workout.created.{record_id}",
