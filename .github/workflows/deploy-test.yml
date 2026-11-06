@@ -109,7 +109,6 @@ jobs:
           username: ec2-user
           key: ${{ secrets.TEST_SSH_KEY }}
           command_timeout: 15m
-          script_stop: true
           script: |
             set -euo pipefail
             TAG="${{ steps.meta.outputs.tag }}"
@@ -143,7 +142,9 @@ jobs:
               cid=$(compose ps -q "$s")
               for i in $(seq 1 "$n"); do
                 st=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid")
-                [ "$st" = "$want" ] && break
+                if [ "$st" = "$want" ]; then
+                  break
+                fi
                 sleep 2
               done
               img=$(docker inspect -f '{{.Config.Image}}' "$cid")
