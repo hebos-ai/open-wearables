@@ -1,0 +1,166 @@
+name: deploy-test
+
+# Despliegue permanente a TEST (EC2 hebos-test, /opt/hebos/test), igual que el
+# deploy-test.yml de garmin-connector, api y clinic-back: imagen del backend a
+# ECR con el rol OIDC y SSH al servidor para recrear SOLO los servicios de OW.
+#
+# Una imagen (`hebos/open-wearables`, el backend) para tres servicios del
+# compose de hebos-infra, que van con el perfil `open-wearables`:
+#   open-wearables-api     → migra al arrancar (alembic); se espera a healthy
+#   open-wearables-worker  → Celery, después de la API
+#   open-wearables-beat    → Celery beat, después de la API
+# `open-wearables-svix` es la imagen pública de Svix: este workflow no la toca.
+#
+# ESTE REPO ES PÚBLICO: la cuenta de AWS, el rol y el servidor NO se escriben
+# aquí; salen de secrets del repo.
+#
+# Requisitos (una vez, los pone Mariano o el dueño):
+#   · repositorio ECR `hebos/open-wearables` con push para el rol OIDC de
+#     GitHub Actions de Hebos (el rol no puede crearlo);
+#   · secrets del repo `AWS_ROLE_ARN`, `TEST_HOST` y `TEST_SSH_KEY` (los
+#     mismos valores que en api);
+#   · primer despliegue hecho (compose de hebos-infra con los servicios y
+#     `env/open-wearables.env` en el servidor): ver
+#     docs/despliegue-test/OW-PRIMER-DESPLIEGUE.md. Si falta, este workflow
+#     falla SIN tocar nada.
+#
+# Los tests no se repiten aquí: los pasa ci.yml (necesitan Postgres).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-test.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-test
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: eu-west-3
+  ECR_REPOSITORY: hebos/open-wearables
+  TAG_VAR: OPEN_WEARABLES_IMAGE_TAG
+  PROFILE: open-wearables
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: meta
+        run: echo "tag=test-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Check deploy secrets
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          TEST_HOST: ${{ secrets.TEST_HOST }}
+          TEST_SSH_KEY: ${{ secrets.TEST_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AWS_ROLE_ARN:-}" ]; then echo "ERROR: secret AWS_ROLE_ARN vacio (ponerlo en este repo, como en api)"; exit 1; fi
+          if [ -z "${TEST_HOST:-}" ]; then echo "ERROR: secret TEST_HOST vacio (ponerlo en este repo, como en api)"; exit 1; fi
+          if [ -z "${TEST_SSH_KEY:-}" ]; then echo "ERROR: secret TEST_SSH_KEY vacio (ponerlo en este repo, como en api)"; exit 1; fi
+          echo "TEST_HOST ok (len=${#TEST_HOST})"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-hebos-open-wearables-test
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Check ECR repository
+        run: |
+          if ! aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1; then
+            echo "ERROR: no existe el repositorio ECR $ECR_REPOSITORY (o el rol no puede verlo)."
+            echo "Lo crea Mariano (aws ecr create-repository) y da push al rol de GitHub Actions."
+            exit 1
+          fi
+
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 --build-arg GIT_SHA="$GITHUB_SHA" \
+            -t "$REGISTRY/$ECR_REPOSITORY:$TAG" -t "$REGISTRY/$ECR_REPOSITORY:test" \
+            -f backend/Dockerfile backend
+          docker push "$REGISTRY/$ECR_REPOSITORY:$TAG"
+          docker push "$REGISTRY/$ECR_REPOSITORY:test"
+
+      - name: Deploy to test EC2
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        with:
+          host: ${{ secrets.TEST_HOST }}
+          username: ec2-user
+          key: ${{ secrets.TEST_SSH_KEY }}
+          command_timeout: 15m
+          script_stop: true
+          envs: TAG_VAR,ECR_REPOSITORY,PROFILE,REGISTRY
+          script: |
+            set -euo pipefail
+            TAG="${{ steps.meta.outputs.tag }}"
+            cd /opt/hebos/test
+            AWS_REGION="${REGISTRY#*.dkr.ecr.}"; AWS_REGION="${AWS_REGION%%.*}"
+            if docker compose version >/dev/null 2>&1; then DC='docker compose'; else DC='docker-compose'; fi
+            DC="$DC --profile $PROFILE"
+            # Sin primer despliegue (compose con los servicios y su env) no se toca nada.
+            for s in open-wearables-api open-wearables-worker open-wearables-beat; do
+              if ! $DC config --services 2>/dev/null | grep -qx "$s"; then
+                echo "ERROR: el docker-compose.yml del servidor no tiene el servicio $s."
+                echo "Falta el primer despliegue: docs/despliegue-test/OW-PRIMER-DESPLIEGUE.md"
+                exit 1
+              fi
+            done
+            if [ ! -s env/open-wearables.env ]; then
+              echo "ERROR: falta env/open-wearables.env en el servidor (primer despliegue)."
+              exit 1
+            fi
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | docker login --username AWS --password-stdin "$REGISTRY"
+            export "$TAG_VAR=$TAG"
+            docker image prune -af >/dev/null || true
+            $DC pull open-wearables-api
+
+            comprobar() {  # servicio, estado esperado (healthy | running), intentos de 2 s
+              local s=$1 want=$2 n=$3 cid st="" img
+              cid=$($DC ps -q "$s")
+              for i in $(seq 1 "$n"); do
+                st=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid")
+                [ "$st" = "$want" ] && break
+                sleep 2
+              done
+              img=$(docker inspect -f '{{.Config.Image}}' "$cid")
+              echo "$s image=$img state=$st restarts=$(docker inspect -f '{{.RestartCount}}' "$cid")"
+              if ! printf '%s\n' "$img" | grep -F ":$TAG" >/dev/null; then echo "ERROR: $s no usa el tag $TAG"; exit 1; fi
+              if [ "$st" != "$want" ] || [ "$(docker inspect -f '{{.RestartCount}}' "$cid")" != 0 ]; then
+                echo "ERROR: $s no esta $want. Ultimos logs:"; docker logs --tail 80 "$cid" 2>&1 || true; exit 1
+              fi
+            }
+
+            # La API primero: migra la base. Worker y beat después, con la base ya migrada.
+            $DC up -d --no-deps --force-recreate open-wearables-api
+            comprobar open-wearables-api healthy 90
+            $DC up -d --no-deps --force-recreate open-wearables-worker open-wearables-beat
+            sleep 15   # que un fallo de arranque se vea como reinicio
+            comprobar open-wearables-worker running 5
+            comprobar open-wearables-beat running 5
+            echo deploy_ok
